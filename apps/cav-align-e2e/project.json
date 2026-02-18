@@ -1,11 +1,10 @@
 {
-  "name": "mqtt-align-e2e",
+  "name": "cav-align-e2e",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "projectType": "application",
-  "sourceRoot": "apps/mqtt-align-e2e/src",
+  "sourceRoot": "apps/cav-align-e2e/src",
   "implicitDependencies": [
-    "mqtt-align"
+    "cav-align"
   ],
-  "// targets": "to see all targets run: nx show project mqtt-align-e2e --web",
   "targets": {}
 }
