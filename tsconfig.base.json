@@ -1,0 +1,26 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "rootDir": ".",
+    "sourceMap": true,
+    "declaration": false,
+    "moduleResolution": "node",
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "importHelpers": true,
+    "target": "es2015",
+    "module": "esnext",
+    "lib": ["es2020", "dom"],
+    "skipLibCheck": true,
+    "skipDefaultLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@cav-align/core": ["libs/cav-core/src/index.ts"],
+      "@cav-align/ui": ["libs/modules/ui/src/index.ts"],
+      "@cav-align/modules/mqtt": ["libs/modules/mqtt/src/index.ts"],
+      "@app/*": ["apps/cav-align/src/app/*"],
+      "@env/*": ["apps/cav-align/src/environments/*"]
+    }
+  },
+  "exclude": ["node_modules", "tmp"]
+}

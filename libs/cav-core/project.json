@@ -1,0 +1,11 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "cav-core",
+  "root": "libs/cav-core",
+  "sourceRoot": "libs/cav-core/src",
+  "projectType": "library",
+  "tags": [
+    "type:core"
+  ],
+  "targets": {}
+}

@@ -1,0 +1,9 @@
+{
+  "conventionalCommits.scopes": [
+    "nx",
+    "domain",
+    "app",
+    "lint",
+    "mqtt-align-vscode"
+  ]
+}

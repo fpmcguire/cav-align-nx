@@ -1,0 +1,21 @@
+{
+  "name": "mqtt-align-vscode",
+  "displayName": "MQTT-Align",
+  "publisher": "veracity-data-labs",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "activationEvents": [
+    "onCommand:mqtt-align.hello"
+  ],
+  "main": "./dist/apps/mqtt-align-vscode/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "mqtt-align.hello",
+        "title": "MQTT-Align: Hello"
+      }
+    ]
+  }
+}

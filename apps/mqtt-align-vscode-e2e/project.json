@@ -1,0 +1,24 @@
+{
+  "name": "mqtt-align-vscode-e2e",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "implicitDependencies": [
+    "mqtt-align-vscode"
+  ],
+  "targets": {
+    "e2e": {
+      "executor": "@nx/jest:jest",
+      "outputs": [
+        "{workspaceRoot}/coverage/{e2eProjectRoot}"
+      ],
+      "options": {
+        "jestConfig": "apps/mqtt-align-vscode-e2e/jest.config.cts",
+        "passWithNoTests": true
+      },
+      "dependsOn": [
+        "mqtt-align-vscode:build",
+        "mqtt-align-vscode:serve"
+      ]
+    }
+  }
+}

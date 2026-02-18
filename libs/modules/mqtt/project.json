@@ -1,0 +1,8 @@
+{
+  "name": "modules-mqtt",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/modules/mqtt/src",
+  "projectType": "library",
+  "tags": ["scope:mqtt", "type:module"],
+  "targets": {}
+}
