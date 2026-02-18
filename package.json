@@ -14,9 +14,11 @@
     "@angular/platform-server": "~21.1.0",
     "@angular/router": "~21.1.0",
     "@angular/ssr": "~21.1.0",
-    "@supabase/supabase-js": "^2.96.0",
+    "@supabase/supabase-js": "^2.97.0",
+    "@types/cors": "^2.8.19",
     "axios": "^1.6.0",
     "express": "^4.21.2",
+    "mqtt": "^5.15.0",
     "rxjs": "~7.8.0"
   },
   "devDependencies": {

@@ -4,6 +4,7 @@
     "domain",
     "app",
     "lint",
-    "mqtt-align-vscode"
+    "mqtt-align-vscode",
+    "cav-align app"
   ]
 }

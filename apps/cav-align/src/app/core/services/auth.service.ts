@@ -13,12 +13,7 @@
  */
 import { Injectable, signal, computed, inject } from '@angular/core';
 import { Router } from '@angular/router';
-import {
-  createClient,
-  SupabaseClient,
-  Session,
-  User,
-} from '@supabase/supabase-js';
+import { createClient, SupabaseClient, Session, User } from '@supabase/supabase-js';
 import { environment } from '../../../environments/environment';
 
 @Injectable({ providedIn: 'root' })
@@ -28,7 +23,7 @@ export class AuthService {
   // Lazily initialised Supabase client — one instance for the app lifetime.
   private readonly supabase: SupabaseClient = createClient(
     environment.supabaseUrl,
-    environment.supabaseAnonKey,
+    environment.supabaseAnonKey
   );
 
   // ---------------------------------------------------------------------------
@@ -63,34 +58,23 @@ export class AuthService {
     this._session.set(data.session);
     this._loading.set(false);
 
-    this.supabase.auth.onAuthStateChange(
-      (_event: unknown, session: Session | null) => {
-        this._session.set(session);
-      },
-    );
+    this.supabase.auth.onAuthStateChange((_event: unknown, session: Session | null) => {
+      this._session.set(session);
+    });
   }
 
   // ---------------------------------------------------------------------------
   // Auth operations
   // ---------------------------------------------------------------------------
 
-  async signIn(
-    email: string,
-    password: string,
-  ): Promise<{ error: string | null }> {
-    const { error } = await this.supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+  async signIn(email: string, password: string): Promise<{ error: string | null }> {
+    const { error } = await this.supabase.auth.signInWithPassword({ email, password });
     if (error) return { error: error.message };
     await this.router.navigateByUrl('/app');
     return { error: null };
   }
 
-  async signUp(
-    email: string,
-    password: string,
-  ): Promise<{ error: string | null }> {
+  async signUp(email: string, password: string): Promise<{ error: string | null }> {
     const { error } = await this.supabase.auth.signUp({ email, password });
     if (error) return { error: error.message };
     return { error: null };

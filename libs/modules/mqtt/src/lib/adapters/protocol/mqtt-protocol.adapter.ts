@@ -16,7 +16,7 @@
  */
 
 import { BehaviorSubject, Observable, Subject, EMPTY } from 'rxjs';
-import { map, switchMap, filter, catchError } from 'rxjs/operators';
+import { map, filter as rxjsFilter, catchError } from 'rxjs/operators';
 import type {
   ProtocolAdapter,
   ProtocolConnection,
@@ -24,10 +24,10 @@ import type {
   ProtocolConnectionStatus,
   NormalizedMessage,
 } from '@cav-align/core';
-import { MqttJsBrowserAdapter } from '../adapters/mqttjs-browser.adapter';
-import type { MqttBrowserConfig } from '../adapters/mqttjs-browser.adapter';
-import { normalizeMqttMessage } from '../normalizers/mqtt-message-normalizer';
-import type { MqttRawMessage } from '../normalizers/mqtt-message-normalizer';
+import { MqttJsBrowserAdapter, MqttBrowserConfig } from '../mqttjs-browser.adapter';
+import type { MqttConnectionState } from '../../ports/mqtt-client.port';
+import { normalizeMqttMessage } from '../../normalizers/mqtt-message-normalizer';
+import type { MqttRawMessage } from '../../normalizers/mqtt-message-normalizer';
 
 /**
  * MQTT protocol adapter for the CAV-Align shell.
@@ -47,7 +47,7 @@ export class MqttProtocolAdapter implements ProtocolAdapter {
     this.mqttClient = mqttClient ?? new MqttJsBrowserAdapter();
 
     // Mirror the underlying MQTT client state
-    this.mqttClient.state$.subscribe((state) => {
+    this.mqttClient.state$.subscribe((state: MqttConnectionState) => {
       this.stateSubject.next(state as ProtocolConnectionStatus);
     });
   }
@@ -78,7 +78,7 @@ export class MqttProtocolAdapter implements ProtocolAdapter {
 
     // Wait for connection
     await new Promise<void>((resolve, reject) => {
-      const sub = this.mqttClient.state$.subscribe((state) => {
+      const sub = this.mqttClient.state$.subscribe((state: MqttConnectionState) => {
         if (state === 'connected') {
           sub.unsubscribe();
           resolve();
@@ -113,25 +113,25 @@ export class MqttProtocolAdapter implements ProtocolAdapter {
   private subscribeToTopics(connection: MqttConnection): void {
     const topicFilters = connection.config.topicFilters;
 
-    topicFilters.forEach((filter) => {
+    topicFilters.forEach((topicFilter) => {
       this.mqttClient
-        .subscribe(filter, { qos: 0 })
+        .subscribe(topicFilter, { qos: 0 })
         .pipe(
-          map((msg): MqttRawMessage => ({
+          map((msg: { topic: string; payload: Uint8Array }): MqttRawMessage => ({
             topic: msg.topic,
             payload: msg.payload,
-            qos: 0, // TODO: Extract from mqtt.js if available
+            qos: 0,
             retain: false,
             dup: false,
           })),
-          map((raw) =>
+          map((raw: MqttRawMessage): NormalizedMessage | null =>
             normalizeMqttMessage(raw, {
               tenantId: connection.tenantId,
               connectionId: connection.id,
             })
           ),
-          filter((msg): msg is NormalizedMessage => msg !== null),
-          catchError((err) => {
+          rxjsFilter((msg: NormalizedMessage | null): msg is NormalizedMessage => msg !== null),
+          catchError((err: unknown) => {
             console.error('Error processing MQTT message:', err);
             return EMPTY;
           })

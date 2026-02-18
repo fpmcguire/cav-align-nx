@@ -63,7 +63,10 @@ export class MqttJsBrowserAdapter implements MqttClientPort {
 
     this.stateSubject.next('connecting');
 
-    const zone = this.zone ?? { run: (fn: () => void) => fn(), runOutsideAngular: (fn: () => void) => fn() };
+    const zone = this.zone ?? {
+      run: (fn: () => void) => fn(),
+      runOutsideAngular: (fn: () => void) => fn(),
+    };
 
     zone.runOutsideAngular(() => {
       const client = mqtt.connect(cfg.url, options);
@@ -127,7 +130,7 @@ export class MqttJsBrowserAdapter implements MqttClientPort {
         topic,
         body as never,
         { qos: options?.qos ?? 0, retain: options?.retain ?? false },
-        (err) => (err ? reject(err) : resolve())
+        (err: Error | undefined) => (err ? reject(err) : resolve())
       );
     });
   }
