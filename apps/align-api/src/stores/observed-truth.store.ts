@@ -3,14 +3,10 @@
  *
  * CAV Level 1 hardening — Store layer, Section 2 of Hardening Directive.
  *
- * Stateless persistence adapter for:
- *   - sources table
- *   - observed_truths table
- *
- * Rules:
- *   - Requires tenantId explicitly on every method.
- *   - No business rule logic.
- *   - Only layer allowed to call Supabase for OT/sources data.
+ * All methods require tenantId explicitly.
+ * Service-role client used throughout — isolation enforced via
+ * explicit .eq('tenant_id', tenantId) on every query.
+ * No token re-parsing in routes.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -18,26 +14,34 @@ import type { ObservedTruth } from '@cav-align/core';
 import { rootLogger } from '../lib/logger';
 
 export interface SourceUpsertInput {
-  tenantId: string;
-  connectionId: string;
-  protocol: string;
-  sourceIdentifier: string;
+  tenantId:             string;
+  connectionId:         string;
+  protocol:             string;
+  sourceIdentifier:     string;
   sourceIdentifierHash: string;
-  firstSeenAt: string;
-  lastSeenAt: string;
+  firstSeenAt:          string;
+  lastSeenAt:           string;
 }
 
 export interface SourceUpdateCountInput {
-  tenantId: string;
-  dbSourceId: string;
-  messageCount: number;
+  tenantId:      string;
+  dbSourceId:    string;
+  messageCount:  number;
   lastMessageAt: string;
 }
 
 export interface ObservedTruthInsertInput {
-  tenantId: string;
+  tenantId:   string;
   dbSourceId: string;
-  ot: ObservedTruth;
+  ot:         ObservedTruth;
+}
+
+export interface SourceDto {
+  id:               string;
+  sourceIdentifier: string;
+  status:           string;
+  lastMessageAt:    string | null;
+  messageCount:     number;
 }
 
 export class ObservedTruthStore {
@@ -126,8 +130,8 @@ export class ObservedTruthStore {
   }
 
   async markSourceEstablished(input: {
-    tenantId: string;
-    dbSourceId: string;
+    tenantId:          string;
+    dbSourceId:        string;
     dbObservedTruthId: string;
   }): Promise<void> {
     try {
@@ -147,41 +151,34 @@ export class ObservedTruthStore {
       this.log.error('markSourceEstablished exception', err);
     }
   }
-}
 
-// ---------------------------------------------------------------------------
-// Read methods (user-scoped — respects RLS)
-// ---------------------------------------------------------------------------
+  /**
+   * List sources for a tenant.
+   * tenantId enforced explicitly — service-role client does not rely on RLS alone.
+   */
+  async listSources(tenantId: string): Promise<SourceDto[]> {
+    try {
+      const { data, error } = await this.supabase
+        .from('sources')
+        .select('id, source_identifier, status, last_message_at, message_count')
+        .eq('tenant_id', tenantId)
+        .order('last_message_at', { ascending: false });
 
-import { buildUserClient } from '../lib/supabase-client';
+      if (error) {
+        this.log.error('listSources failed', error, { tenantId });
+        throw new Error('Failed to fetch sources');
+      }
 
-export interface SourceDto {
-  id:             string;
-  sourceIdentifier: string;
-  status:         string;
-  lastMessageAt:  string | null;
-  messageCount:   number;
-}
-
-export async function listSources(token: string): Promise<SourceDto[]> {
-  const supabase = buildUserClient(token);
-  if (!supabase) return [];
-
-  const { data, error } = await supabase
-    .from('sources')
-    .select('id, source_identifier, status, last_message_at, message_count')
-    .order('last_message_at', { ascending: false });
-
-  if (error) {
-    rootLogger.error('listSources failed', error);
-    throw new Error('Failed to fetch sources');
+      return (data ?? []).map((row: Record<string, unknown>) => ({
+        id:               row['id'] as string,
+        sourceIdentifier: row['source_identifier'] as string,
+        status:           row['status'] as string,
+        lastMessageAt:    (row['last_message_at'] as string) ?? null,
+        messageCount:     (row['message_count'] as number) ?? 0,
+      }));
+    } catch (err) {
+      this.log.error('listSources exception', err, { tenantId });
+      throw err;
+    }
   }
-
-  return (data ?? []).map((row: Record<string, unknown>) => ({
-    id:               row['id'] as string,
-    sourceIdentifier: row['source_identifier'] as string,
-    status:           row['status'] as string,
-    lastMessageAt:    (row['last_message_at'] as string) ?? null,
-    messageCount:     (row['message_count'] as number) ?? 0,
-  }));
 }

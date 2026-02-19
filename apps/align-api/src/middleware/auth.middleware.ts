@@ -4,38 +4,39 @@
  * CAV Level 1 hardening — Section 3 of Hardening Directive.
  *
  * Responsibilities:
- *   1. Generate requestId for every request.
- *   2. Validate Bearer JWT via Supabase anon client.
+ *   1. Honour existing requestId if already set by app.ts base middleware.
+ *   2. Validate Bearer JWT via Supabase user-scoped client.
  *   3. Resolve tenantId from tenant_users table.
  *   4. Attach TenantContext to req.tenantContext.
  *   5. Attach per-request child logger to req.log.
+ *
+ * Production gate:
+ *   If NODE_ENV=production OR REQUIRE_AUTH=true, offline bypass is disabled.
+ *   Requests without Supabase configured will receive 503 in production.
  *
  * Tenant is NEVER inferred from request body — always from JWT.
  */
 
 import type { Request, Response, NextFunction } from 'express';
-import type { SupabaseClient } from '@supabase/supabase-js';
 import { buildUserClient } from '../lib/supabase-client';
-import { randomUUID } from 'crypto';
-import type { TenantContext, ModuleLimits, ModuleUsage } from '@cav-align/core';
 import { rootLogger } from '../lib/logger';
+import type { TenantContext, ModuleLimits, ModuleUsage } from '@cav-align/core';
 
-// ---------------------------------------------------------------------------
-// Build a user-scoped Supabase client from a bearer token
-// ---------------------------------------------------------------------------
-// buildUserClient imported from lib/supabase-client
+function isProductionMode(): boolean {
+  return process.env['NODE_ENV'] === 'production' || process.env['REQUIRE_AUTH'] === 'true';
+}
 
-// ---------------------------------------------------------------------------
-// Middleware
-// ---------------------------------------------------------------------------
 export async function tenantAuthMiddleware(
   req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  const requestId = randomUUID();
-  req.requestId   = requestId;
-  req.log         = rootLogger.child({ requestId });
+  // Honour requestId already set by app.ts — do not regenerate
+  if (!req.requestId) {
+    const { randomUUID } = await import('crypto');
+    req.requestId = randomUUID();
+    req.log       = rootLogger.child({ requestId: req.requestId });
+  }
 
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
@@ -43,13 +44,17 @@ export async function tenantAuthMiddleware(
     return;
   }
 
-  const token = authHeader.replace('Bearer ', '').trim();
-
+  const token    = authHeader.replace('Bearer ', '').trim();
   const supabase = buildUserClient(token);
+
   if (!supabase) {
-    // Supabase not configured — allow request through without tenant context
-    // in offline/dev mode. Routes that need a tenant will 501 themselves.
-    req.log.warn('Supabase not configured — skipping auth');
+    if (isProductionMode()) {
+      req.log.error('Auth bypassed in production — Supabase not configured');
+      res.status(503).json({ error: 'Authentication service not available' });
+      return;
+    }
+    // Offline/dev mode only — warn and pass through
+    req.log.warn('Supabase not configured — skipping auth (dev/offline mode only)');
     next();
     return;
   }
@@ -92,30 +97,29 @@ export async function tenantAuthMiddleware(
       createdAt:        (tenantRow?.['created_at'] as string) ?? '',
     },
     subscriptions: (subs ?? []).map((s: Record<string, unknown>) => ({
-      id:             s['id'] as string,
-      tenantId:       s['tenant_id'] as string,
-      moduleName:     s['module_name'] as string,
-      status:         s['status'] as 'active' | 'trial' | 'suspended' | 'canceled',
-      tier:           s['tier'] as 'starter' | 'professional' | 'enterprise' | 'custom',
-      limits:         (s['limits'] as ModuleLimits) ?? ({} as ModuleLimits),
-      usage:          (s['usage'] as ModuleUsage) ?? ({} as ModuleUsage),
-      startedAt:      s['started_at'] as string,
-      expiresAt:      s['expires_at'] as string | undefined,
-      trialEndsAt:    s['trial_ends_at'] as string | undefined,
-      usageResetAt:   s['usage_reset_at'] as string,
+      id:           s['id'] as string,
+      tenantId:     s['tenant_id'] as string,
+      moduleName:   s['module_name'] as string,
+      status:       s['status'] as 'active' | 'trial' | 'suspended' | 'canceled',
+      tier:         s['tier'] as 'starter' | 'professional' | 'enterprise' | 'custom',
+      limits:       (s['limits'] as ModuleLimits) ?? ({} as ModuleLimits),
+      usage:        (s['usage'] as ModuleUsage) ?? ({} as ModuleUsage),
+      startedAt:    s['started_at'] as string,
+      expiresAt:    s['expires_at'] as string | undefined,
+      trialEndsAt:  s['trial_ends_at'] as string | undefined,
+      usageResetAt: s['usage_reset_at'] as string,
     })),
   };
 
   req.tenantContext = context;
 
-  // Rebind logger with tenant + user context
+  // Rebind logger with tenant + user — same requestId, no new UUID
   req.log = rootLogger.child({
-    requestId,
-    tenantId: context.tenant.id,
-    userId:   user.id,
+    requestId: req.requestId,
+    tenantId:  context.tenant.id,
+    userId:    user.id,
   });
 
   req.log.debug('Request authenticated', { method: req.method, path: req.path });
-
   next();
 }

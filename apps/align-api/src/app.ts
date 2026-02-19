@@ -1,7 +1,7 @@
 /**
  * app.ts
  *
- * CAV Level 1 — Session B hardening complete.
+ * CAV Level 1 — Session C hardening complete.
  *
  * Startup order:
  *   1. Supabase (service role) + encryption check
@@ -9,7 +9,7 @@
  *   3. WebSocket server (JWT auth + per-tenant rate limiting)
  *   4. Module registry
  *   5. Ingestion orchestrator
- *   6. Global HTTP rate limiting
+ *   6. Anonymous rate limiting (global, IP-based)
  *   7. API routes
  *   8. Health endpoint (full subsystem detail)
  *   9. Expected divergence expiration checker
@@ -26,7 +26,7 @@ import { initializeModules } from './modules/initialize-modules';
 import { IngestionOrchestrator } from './ingestion/ingestion-orchestrator';
 import { getSupabaseClient } from './lib/supabase-client';
 import { rootLogger } from './lib/logger';
-import { rateLimitMiddleware } from './middleware/rate-limit.middleware';
+import { anonRateLimit } from './middleware/rate-limit.middleware';
 import { ObservedTruthStore } from './stores/observed-truth.store';
 import { DivergenceStore } from './stores/divergence.store';
 import { ExpectedDivergenceStore } from './stores/expected-divergence.store';
@@ -81,8 +81,9 @@ export async function startServer(port: number | string): Promise<HttpServer> {
   // ── 5. Ingestion orchestrator ───────────────────────────────────────────
   const ingestionOrchestrator = new IngestionOrchestrator(moduleRegistry, wsServer, stores);
 
-  // ── 6. Global HTTP rate limiting ────────────────────────────────────────
-  app.use(rateLimitMiddleware);
+  // ── 6. Global anonymous rate limiting (IP-based, 30 req/60s) ───────────
+  //    Tenant rate limiting (300 req/60s) applied per-router after auth.
+  app.use(anonRateLimit);
 
   // ── 7. Health endpoint (full subsystem detail) ──────────────────────────
   app.get('/health', (_req, res) => {

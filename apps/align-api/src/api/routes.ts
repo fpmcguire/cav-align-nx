@@ -1,12 +1,15 @@
 /**
  * routes.ts
  *
- * Thin route controllers — no tenant derivation, no direct Supabase access.
- * All routes protected by tenantAuthMiddleware.
- * tenantId always comes from req.tenantContext.
+ * Thin route controllers — no tenant derivation, no token re-parsing.
  * All DB access via store layer only.
+ * tenantId always comes from req.tenantContext.tenant.id.
  *
- * CAV Level 1 hardening — Session A complete.
+ * Rate limiting:
+ *   - anonRateLimit applied globally in app.ts (before auth)
+ *   - tenantRateLimit applied here after tenantAuthMiddleware (300/60s per tenant)
+ *
+ * CAV Level 1 — Session C hardening complete.
  */
 
 import type { Express } from 'express';
@@ -14,9 +17,10 @@ import type { ModuleRegistry } from '../modules/module-registry';
 import type { IngestionOrchestrator } from '../ingestion/ingestion-orchestrator';
 import type { AlignWebSocketServer } from '../websocket/websocket-server';
 import { tenantAuthMiddleware } from '../middleware/auth.middleware';
+import { tenantRateLimit } from '../middleware/rate-limit.middleware';
 import { createExpectedDivergenceRouter } from './expected-divergence.routes';
-import { listDivergenceEvents } from '../stores/divergence.store';
-import { listSources } from '../stores/observed-truth.store';
+import { DivergenceStore } from '../stores/divergence.store';
+import { ObservedTruthStore } from '../stores/observed-truth.store';
 import { ConnectionStore } from '../stores/connection.store';
 import { getSupabaseClient } from '../lib/supabase-client';
 import { hasModule } from '@cav-align/core';
@@ -28,8 +32,17 @@ export interface ApiDependencies {
   wsServer:              AlignWebSocketServer;
 }
 
+// Auth + tenant rate limit applied together on every protected route group
+const protect = [tenantAuthMiddleware, tenantRateLimit];
+
 export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
-  const { moduleRegistry, ingestionOrchestrator } = deps;
+  const { moduleRegistry } = deps;
+
+  // Service-role store instances — shared across requests (stateless)
+  const supabase = getSupabaseClient();
+  const divStore = supabase ? new DivergenceStore(supabase)     : null;
+  const otStore  = supabase ? new ObservedTruthStore(supabase)  : null;
+  const connStore = supabase ? new ConnectionStore(supabase)    : null;
 
   // ── Public — no auth ─────────────────────────────────────────────────────
   app.get('/api', (_req, res) => {
@@ -42,46 +55,41 @@ export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
   });
 
   // ── Expected divergences ─────────────────────────────────────────────────
-  app.use('/api/expected-divergences', tenantAuthMiddleware, createExpectedDivergenceRouter());
+  app.use('/api/expected-divergences', ...protect, createExpectedDivergenceRouter());
 
   // ── Divergence events ─────────────────────────────────────────────────────
-  app.get('/api/divergence', tenantAuthMiddleware, async (req, res) => {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  app.get('/api/divergence', ...protect, async (req, res) => {
+    if (!divStore) return res.status(501).json({ error: 'Supabase not configured' });
 
     try {
-      const events = await listDivergenceEvents(token, {
+      const events = await divStore.listEvents(req.tenantContext.tenant.id, {
         status:    req.query['status']    as string | undefined,
         dimension: req.query['dimension'] as string | undefined,
       });
       return res.json({ events });
     } catch {
-      req.log.error('Failed to fetch divergence events', undefined, {
-        tenantId: req.tenantContext?.tenant?.id,
-      });
+      req.log.error('Failed to fetch divergence events');
       return res.status(500).json({ error: 'Failed to fetch divergence events' });
     }
   });
 
   // ── Sources ───────────────────────────────────────────────────────────────
-  app.get('/api/sources', tenantAuthMiddleware, async (req, res) => {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  app.get('/api/sources', ...protect, async (req, res) => {
+    if (!otStore) return res.status(501).json({ error: 'Supabase not configured' });
 
     try {
-      const sources = await listSources(token);
+      const sources = await otStore.listSources(req.tenantContext.tenant.id);
       return res.json({ sources });
     } catch {
-      req.log.error('Failed to fetch sources', undefined, {
-        tenantId: req.tenantContext?.tenant?.id,
-      });
+      req.log.error('Failed to fetch sources');
       return res.status(500).json({ error: 'Failed to fetch sources' });
     }
   });
 
   // ── Connections ───────────────────────────────────────────────────────────
+  app.post('/api/connections', ...protect, async (req, res) => {
+    if (!connStore) return res.status(501).json({ error: 'Supabase not configured' });
 
-  app.post('/api/connections', tenantAuthMiddleware, async (req, res) => {
     const { tenantContext } = req;
     const { name, protocol, config, credentials } = req.body as {
       name:        string;
@@ -90,7 +98,6 @@ export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
       credentials: Record<string, unknown>;
     };
 
-    // Validate required fields
     if (!name || !protocol || !config || !credentials) {
       return res.status(400).json({ error: 'name, protocol, config and credentials are required' });
     }
@@ -100,37 +107,24 @@ export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
       return res.status(400).json({ error: `Invalid protocol: ${protocol}` });
     }
 
-    // ── Entitlement check ──────────────────────────────────────────────────
     if (!hasModule(tenantContext, protocol)) {
-      req.log.warn('Entitlement denied — no subscription for protocol', {
-        tenantId: tenantContext.tenant.id,
-        protocol,
-      });
+      req.log.warn('Entitlement denied', { tenantId: tenantContext.tenant.id, protocol });
       return res.status(403).json({
         error: `Your subscription does not include the ${protocol.toUpperCase()} module`,
       });
     }
 
-    const supabase = getSupabaseClient();
-    if (!supabase) {
-      return res.status(501).json({ error: 'Supabase not configured' });
-    }
-
-    const store = new ConnectionStore(supabase);
-
     try {
-      const connection = await store.create({
-        tenantId:    tenantContext.tenant.id,
+      const connection = await connStore.create({
+        tenantId:  tenantContext.tenant.id,
         name,
         protocol,
         config,
         credentials,
-        createdBy:   tenantContext.user.id,
+        createdBy: tenantContext.user.id,
       });
 
-      if (!connection) {
-        return res.status(500).json({ error: 'Failed to create connection' });
-      }
+      if (!connection) return res.status(500).json({ error: 'Failed to create connection' });
 
       req.log.info('Connection created', {
         tenantId:     tenantContext.tenant.id,
@@ -140,42 +134,35 @@ export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
 
       return res.status(201).json(connection);
     } catch (err) {
-      // encryptCredentials throws if CREDENTIAL_ENCRYPTION_KEY is not set
       const message = err instanceof Error ? err.message : 'Failed to create connection';
-      req.log.error('Connection create failed', err, { tenantId: tenantContext.tenant.id });
+      req.log.error('Connection create failed', err);
       return res.status(500).json({ error: message });
     }
   });
 
-  app.get('/api/connections', tenantAuthMiddleware, async (req, res) => {
-    const supabase = getSupabaseClient();
-    if (!supabase) return res.status(501).json({ error: 'Supabase not configured' });
-
-    const store = new ConnectionStore(supabase);
-    const connections = await store.list(req.tenantContext.tenant.id);
+  app.get('/api/connections', ...protect, async (req, res) => {
+    if (!connStore) return res.status(501).json({ error: 'Supabase not configured' });
+    const connections = await connStore.list(req.tenantContext.tenant.id);
     return res.json({ connections });
   });
 
-  app.delete('/api/connections/:id', tenantAuthMiddleware, async (req, res) => {
-    const supabase = getSupabaseClient();
-    if (!supabase) return res.status(501).json({ error: 'Supabase not configured' });
+  app.delete('/api/connections/:id', ...protect, async (req, res) => {
+    if (!connStore) return res.status(501).json({ error: 'Supabase not configured' });
 
-    const store = new ConnectionStore(supabase);
-    const deleted = await store.delete(req.tenantContext.tenant.id, req.params.id);
-
+    const deleted = await connStore.delete(req.tenantContext.tenant.id, req.params['id']);
     if (!deleted) return res.status(404).json({ error: 'Connection not found' });
 
     req.log.info('Connection deleted', {
       tenantId:     req.tenantContext.tenant.id,
-      connectionId: req.params.id,
+      connectionId: req.params['id'],
     });
 
     return res.status(204).send();
   });
 
-  // ── Sessions (stub — ingestion lifecycle managed internally) ──────────────
-  app.post('/api/sessions', (req, res) => res.status(501).json({ error: 'Not implemented' }));
-  app.get('/api/sessions',  (req, res) => res.status(501).json({ error: 'Not implemented' }));
+  // ── Sessions (stub) ───────────────────────────────────────────────────────
+  app.post('/api/sessions', (_, res) => res.status(501).json({ error: 'Not implemented' }));
+  app.get('/api/sessions',  (_, res) => res.status(501).json({ error: 'Not implemented' }));
 
-  console.log('[API] Routes registered (v1.1.0 — Session A hardened)');
+  console.log('[API] Routes registered (v1.1.0 — Session C hardened)');
 }
