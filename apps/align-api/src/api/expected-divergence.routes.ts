@@ -1,16 +1,11 @@
 /**
  * expected-divergence.routes.ts
  *
- * REST API endpoints for the Expected Divergence system (v1.1).
+ * Thin controllers for Expected Divergence endpoints.
+ * tenantContext already attached to req by tenantAuthMiddleware in routes.ts.
+ * No tenant derivation logic here.
  *
- * All endpoints require a valid Supabase JWT (user-scoped — RLS enforced).
- * Tenant ID is derived from the JWT via the tenant_users RLS policy.
- *
- * Routes:
- *   POST   /api/expected-divergences          Create expectation
- *   GET    /api/expected-divergences          List (with filters)
- *   GET    /api/expected-divergences/:id      Get single
- *   PATCH  /api/expected-divergences/:id/cancel  Cancel (before window_start)
+ * CAV Level 1 hardening — Section 2 (Routes) of Hardening Directive.
  */
 
 import type { Router } from 'express';
@@ -20,61 +15,49 @@ import { createClient } from '@supabase/supabase-js';
 export function createExpectedDivergenceRouter(): Router {
   const router = createRouter();
 
-  // ---------------------------------------------------------------------------
-  // Helper: derive user-scoped Supabase client from bearer token
-  // ---------------------------------------------------------------------------
   function getUserClient(authHeader: string | undefined) {
-    const url = process.env['SUPABASE_URL'];
-    const anonKey = process.env['SUPABASE_ANON_KEY'];
-    if (!url || !anonKey) return null;
-
+    const url  = process.env['SUPABASE_URL'];
+    const anon = process.env['SUPABASE_ANON_KEY'];
+    if (!url || !anon) return null;
     const token = authHeader?.replace('Bearer ', '');
     if (!token) return null;
-
-    return createClient(url, anonKey, {
+    return createClient(url, anon, {
       global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: { autoRefreshToken: false, persistSession: false },
     });
   }
 
-  // ---------------------------------------------------------------------------
-  // POST /api/expected-divergences
-  // ---------------------------------------------------------------------------
+  // POST /
   router.post('/', async (req, res) => {
+    const tenantId = req.tenantContext?.tenant?.id;
+    if (!tenantId) return res.status(401).json({ error: 'Unauthorized' });
+
     const supabase = getUserClient(req.headers.authorization);
-    if (!supabase) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+    if (!supabase) return res.status(501).json({ error: 'Supabase not configured' });
 
     const { topic, identityScope, expectedDimensions, windowStart, windowEnd, graceMinutes } = req.body;
 
-    // Validation
     if (!topic) return res.status(400).json({ error: 'topic is required' });
     if (!Array.isArray(expectedDimensions) || expectedDimensions.length === 0) {
       return res.status(400).json({ error: 'expectedDimensions must be a non-empty array' });
     }
-
-    const validDimensions = ['shape', 'cadence', 'domain'];
     for (const d of expectedDimensions) {
-      if (!validDimensions.includes(d)) {
+      if (!['shape', 'cadence', 'domain'].includes(d)) {
         return res.status(400).json({ error: `Invalid dimension: ${d}` });
       }
     }
-
     if (!windowStart || !windowEnd) {
       return res.status(400).json({ error: 'windowStart and windowEnd are required' });
     }
 
     const startMs = new Date(windowStart).getTime();
     const endMs   = new Date(windowEnd).getTime();
-
     if (isNaN(startMs) || isNaN(endMs)) {
       return res.status(400).json({ error: 'windowStart and windowEnd must be valid ISO 8601 dates' });
     }
-
     if (endMs <= startMs) {
       return res.status(400).json({ error: 'windowEnd must be after windowStart' });
     }
-
     if (startMs < Date.now() - 60_000) {
       return res.status(400).json({ error: 'windowStart cannot be in the past' });
     }
@@ -82,80 +65,56 @@ export function createExpectedDivergenceRouter(): Router {
     const grace = typeof graceMinutes === 'number' ? graceMinutes : 5;
     if (grace < 0) return res.status(400).json({ error: 'graceMinutes must be >= 0' });
 
-    // Get user ID
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) return res.status(401).json({ error: 'Unauthorized' });
-
-    // Get tenant ID
-    const { data: tenantUser } = await supabase
-      .from('tenant_users')
-      .select('tenant_id')
-      .eq('user_id', user.id)
-      .single();
-
-    if (!tenantUser) {
-      return res.status(403).json({ error: 'No tenant associated with this user' });
-    }
-
     const { data, error } = await supabase
       .from('expected_divergences')
       .insert({
-        tenant_id: tenantUser.tenant_id,
+        tenant_id:           tenantId,
         topic,
-        identity_scope: identityScope ?? null,
+        identity_scope:      identityScope ?? null,
         expected_dimensions: expectedDimensions,
-        window_start: windowStart,
-        window_end: windowEnd,
-        grace_minutes: grace,
-        status: 'pending',
-        created_by: user.id,
+        window_start:        windowStart,
+        window_end:          windowEnd,
+        grace_minutes:       grace,
+        status:              'pending',
+        created_by:          req.tenantContext.user.id,
       })
       .select()
       .single();
 
     if (error) {
-      console.error('[Expected Div API] insert error:', error.message);
+      req.log.error('Expected divergence insert failed', error, { tenantId });
       return res.status(500).json({ error: 'Failed to create expectation' });
     }
 
     return res.status(201).json(rowToDto(data));
   });
 
-  // ---------------------------------------------------------------------------
-  // GET /api/expected-divergences
-  // ---------------------------------------------------------------------------
+  // GET /
   router.get('/', async (req, res) => {
     const supabase = getUserClient(req.headers.authorization);
-    if (!supabase) return res.status(401).json({ error: 'Unauthorized' });
+    if (!supabase) return res.status(501).json({ error: 'Supabase not configured' });
 
     let query = supabase
       .from('expected_divergences')
       .select('*')
       .order('created_at', { ascending: false });
 
-    // Filters
-    if (req.query['status']) {
-      query = query.eq('status', req.query['status'] as string);
-    }
-    if (req.query['topic']) {
-      query = query.ilike('topic', `%${req.query['topic']}%`);
-    }
+    if (req.query['status']) query = query.eq('status', req.query['status'] as string);
+    if (req.query['topic'])  query = query.ilike('topic', `%${req.query['topic']}%`);
 
     const { data, error } = await query;
-
     if (error) {
+      req.log.error('Expected divergence list failed', error);
       return res.status(500).json({ error: 'Failed to list expectations' });
     }
 
     return res.json((data ?? []).map(rowToSummaryDto));
   });
 
-  // ---------------------------------------------------------------------------
-  // GET /api/expected-divergences/:id
-  // ---------------------------------------------------------------------------
+  // GET /:id
   router.get('/:id', async (req, res) => {
     const supabase = getUserClient(req.headers.authorization);
-    if (!supabase) return res.status(401).json({ error: 'Unauthorized' });
+    if (!supabase) return res.status(501).json({ error: 'Supabase not configured' });
 
     const { data, error } = await supabase
       .from('expected_divergences')
@@ -163,37 +122,28 @@ export function createExpectedDivergenceRouter(): Router {
       .eq('id', req.params.id)
       .single();
 
-    if (error || !data) {
-      return res.status(404).json({ error: 'Not found' });
-    }
-
+    if (error || !data) return res.status(404).json({ error: 'Not found' });
     return res.json(rowToDto(data));
   });
 
-  // ---------------------------------------------------------------------------
-  // PATCH /api/expected-divergences/:id/cancel
-  // ---------------------------------------------------------------------------
+  // PATCH /:id/cancel
   router.patch('/:id/cancel', async (req, res) => {
     const supabase = getUserClient(req.headers.authorization);
-    if (!supabase) return res.status(401).json({ error: 'Unauthorized' });
+    if (!supabase) return res.status(501).json({ error: 'Supabase not configured' });
 
-    // Fetch current record
     const { data: existing, error: fetchError } = await supabase
       .from('expected_divergences')
       .select('id, status, window_start')
       .eq('id', req.params.id)
       .single();
 
-    if (fetchError || !existing) {
-      return res.status(404).json({ error: 'Not found' });
-    }
+    if (fetchError || !existing) return res.status(404).json({ error: 'Not found' });
 
     if (existing.status !== 'pending') {
       return res.status(409).json({ error: `Cannot cancel expectation with status '${existing.status}'` });
     }
-
     if (new Date(existing.window_start).getTime() < Date.now()) {
-      return res.status(409).json({ error: 'Cannot cancel expectation after window_start has passed' });
+      return res.status(409).json({ error: 'Cannot cancel after window_start has passed' });
     }
 
     const { data, error } = await supabase
@@ -204,6 +154,7 @@ export function createExpectedDivergenceRouter(): Router {
       .single();
 
     if (error) {
+      req.log.error('Cancel expectation failed', error);
       return res.status(500).json({ error: 'Failed to cancel expectation' });
     }
 
@@ -212,10 +163,6 @@ export function createExpectedDivergenceRouter(): Router {
 
   return router;
 }
-
-// ---------------------------------------------------------------------------
-// DTO mappers (snake_case DB → camelCase API)
-// ---------------------------------------------------------------------------
 
 function rowToDto(row: Record<string, unknown>) {
   return {
