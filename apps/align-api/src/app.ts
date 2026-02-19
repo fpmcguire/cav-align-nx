@@ -1,7 +1,7 @@
 /**
  * app.ts
  *
- * CAV Level 1 — Session C hardening complete.
+ * CAV Level 1 — Session D hardening complete (final).
  *
  * Startup order:
  *   1. Supabase (service role) + encryption check
@@ -32,6 +32,7 @@ import { DivergenceStore } from './stores/divergence.store';
 import { ExpectedDivergenceStore } from './stores/expected-divergence.store';
 import { SessionStore } from './stores/session.store';
 import { ConnectionStore } from './stores/connection.store';
+import { TenantStore } from './stores/tenant.store';
 import { isEncryptionConfigured } from './lib/crypto';
 
 const log = rootLogger.child({ context: 'app' });
@@ -120,11 +121,12 @@ export async function startServer(port: number | string): Promise<HttpServer> {
 
   // ── 9. Expected divergence expiration checker ───────────────────────────
   if (stores) {
+    const tenantStore = new TenantStore(supabase!);
     const runExpirationCheck = async () => {
       try {
-        const { data: tenants } = await supabase!.from('tenants').select('id');
-        for (const t of tenants ?? []) {
-          await stores.expectedDivergence.markExpiredAsMissed(t.id as string);
+        const tenantIds = await tenantStore.listTenantIds();
+        for (const tenantId of tenantIds) {
+          await stores.expectedDivergence.markExpiredAsMissed(tenantId);
         }
       } catch (err) {
         log.error('Expiration checker error', err);

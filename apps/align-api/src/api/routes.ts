@@ -22,6 +22,7 @@ import { createExpectedDivergenceRouter } from './expected-divergence.routes';
 import { DivergenceStore } from '../stores/divergence.store';
 import { ObservedTruthStore } from '../stores/observed-truth.store';
 import { ConnectionStore } from '../stores/connection.store';
+import { ExpectedDivergenceStore } from '../stores/expected-divergence.store';
 import { getSupabaseClient } from '../lib/supabase-client';
 import { hasModule } from '@cav-align/core';
 import type { ProtocolType } from '@cav-align/core';
@@ -43,6 +44,7 @@ export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
   const divStore = supabase ? new DivergenceStore(supabase)     : null;
   const otStore  = supabase ? new ObservedTruthStore(supabase)  : null;
   const connStore = supabase ? new ConnectionStore(supabase)    : null;
+  const edStore  = supabase ? new ExpectedDivergenceStore(supabase) : null;
 
   // ── Public — no auth ─────────────────────────────────────────────────────
   app.get('/api', (_req, res) => {
@@ -55,7 +57,9 @@ export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
   });
 
   // ── Expected divergences ─────────────────────────────────────────────────
-  app.use('/api/expected-divergences', ...protect, createExpectedDivergenceRouter());
+  if (edStore) {
+    app.use('/api/expected-divergences', ...protect, createExpectedDivergenceRouter(edStore));
+  }
 
   // ── Divergence events ─────────────────────────────────────────────────────
   app.get('/api/divergence', ...protect, async (req, res) => {
