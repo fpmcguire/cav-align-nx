@@ -5,12 +5,15 @@
  *
  * Startup order:
  *   1. Supabase service-role client
- *   2. Store layer (all 4 stores)
- *   3. WebSocket server (JWT-authenticated)
- *   4. Module registry + adapters
- *   5. Ingestion orchestrator (engines + stores injected)
- *   6. API routes (all protected by tenantAuthMiddleware)
- *   7. Expected divergence expiration checker
+ *   2. Credential encryption check
+ *   3. Store layer (all 5 stores — including ConnectionStore)
+ *   4. WebSocket server (JWT-authenticated)
+ *   5. Module registry + adapters
+ *   6. Ingestion orchestrator (engines + stores injected)
+ *   7. API routes (all protected by tenantAuthMiddleware)
+ *   8. Expected divergence expiration checker
+ *
+ * CAV Level 1 — Session A hardening complete.
  */
 
 import express, { type Express } from 'express';
@@ -28,6 +31,8 @@ import { ObservedTruthStore } from './stores/observed-truth.store';
 import { DivergenceStore } from './stores/divergence.store';
 import { ExpectedDivergenceStore } from './stores/expected-divergence.store';
 import { SessionStore } from './stores/session.store';
+import { ConnectionStore } from './stores/connection.store';
+import { isEncryptionConfigured } from './lib/crypto';
 
 const log = rootLogger.child({ context: 'app' });
 
@@ -61,6 +66,12 @@ export async function startServer(port: number | string): Promise<HttpServer> {
     log.info('Supabase service-role client initialised');
   } else {
     log.warn('Supabase not configured — running in offline/in-memory mode');
+  }
+
+  if (!isEncryptionConfigured()) {
+    log.warn('CREDENTIAL_ENCRYPTION_KEY not set — broker credential encryption disabled. Set this before accepting connections in production.');
+  } else {
+    log.info('Credential encryption configured');
   }
 
   // ── 2. Store layer ──────────────────────────────────────────────────────

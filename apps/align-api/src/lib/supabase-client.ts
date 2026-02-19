@@ -1,35 +1,68 @@
 /**
  * supabase-client.ts
  *
- * Backend Supabase client using the service role key.
- * This bypasses RLS for server-side engine persistence.
+ * Single source of truth for ALL Supabase client construction.
+ * No other file in align-api should import createClient directly.
+ *
+ * Two client types:
+ *
+ *   getSupabaseClient()    — service-role client (bypasses RLS).
+ *                            Used by stores for engine-side persistence.
+ *                            Requires SUPABASE_SERVICE_ROLE_KEY.
+ *
+ *   buildUserClient(token) — user-scoped client (respects RLS).
+ *                            Used by routes/stores for user-facing queries.
+ *                            Requires SUPABASE_ANON_KEY + valid JWT.
  *
  * Required env vars:
  *   SUPABASE_URL
- *   SUPABASE_SERVICE_ROLE_KEY
+ *   SUPABASE_SERVICE_ROLE_KEY  (engine/store operations)
+ *   SUPABASE_ANON_KEY          (user-scoped operations)
  */
 
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-let _client: SupabaseClient | null = null;
+// ---------------------------------------------------------------------------
+// Service-role client (singleton — bypasses RLS)
+// ---------------------------------------------------------------------------
+
+let _serviceClient: SupabaseClient | null = null;
 
 export function getSupabaseClient(): SupabaseClient | undefined {
   const url = process.env['SUPABASE_URL'];
   const key = process.env['SUPABASE_SERVICE_ROLE_KEY'];
 
   if (!url || !key) {
-    // Supabase not configured — engines run in offline/in-memory mode
     return undefined;
   }
 
-  if (!_client) {
-    _client = createClient(url, key, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
+  if (!_serviceClient) {
+    _serviceClient = createClient(url, key, {
+      auth: { autoRefreshToken: false, persistSession: false },
     });
   }
 
-  return _client;
+  return _serviceClient;
+}
+
+// ---------------------------------------------------------------------------
+// User-scoped client (per-request — respects RLS)
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds a Supabase client scoped to the authenticated user's JWT.
+ * RLS policies are enforced — tenant isolation guaranteed by DB layer.
+ *
+ * Returns null if Supabase is not configured (offline mode).
+ */
+export function buildUserClient(token: string): SupabaseClient | null {
+  const url  = process.env['SUPABASE_URL'];
+  const anon = process.env['SUPABASE_ANON_KEY'];
+
+  if (!url || !anon) return null;
+
+  return createClient(url, anon, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
 }

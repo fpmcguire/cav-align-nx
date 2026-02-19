@@ -98,3 +98,69 @@ export class DivergenceStore {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Read methods (user-scoped — respects RLS)
+// ---------------------------------------------------------------------------
+
+import { buildUserClient } from '../lib/supabase-client';
+
+export interface DivergenceEventFilters {
+  status?:    string;
+  dimension?: string;
+}
+
+export interface DivergenceEventDto {
+  id:               string;
+  dimension:        string;
+  status:           string;
+  sourceIdentifier: string | null;
+  onsetEstimatedAt: string;
+  confirmedAt:      string | null;
+  resolvedAt:       string | null;
+  evidence:         unknown;
+  deviceId:         string | null;
+}
+
+export async function listDivergenceEvents(
+  token: string,
+  filters: DivergenceEventFilters = {},
+): Promise<DivergenceEventDto[]> {
+  const supabase = buildUserClient(token);
+  if (!supabase) return [];
+
+  let query = supabase
+    .from('divergence_events')
+    .select(`
+      id, dimension, status, onset_estimated_at, confirmed_at, resolved_at,
+      evidence, device_id,
+      sources!inner(source_identifier, tenant_id)
+    `)
+    .order('onset_estimated_at', { ascending: false })
+    .limit(100);
+
+  if (filters.status)    query = query.eq('status',    filters.status);
+  if (filters.dimension) query = query.eq('dimension', filters.dimension);
+
+  const { data, error } = await query;
+
+  if (error) {
+    rootLogger.error('listDivergenceEvents failed', error);
+    throw new Error('Failed to fetch divergence events');
+  }
+
+  return (data ?? []).map((row: Record<string, unknown>) => {
+    const source = row['sources'] as Record<string, unknown> | null;
+    return {
+      id:               row['id'] as string,
+      dimension:        row['dimension'] as string,
+      status:           row['status'] as string,
+      sourceIdentifier: (source?.['source_identifier'] as string) ?? null,
+      onsetEstimatedAt: row['onset_estimated_at'] as string,
+      confirmedAt:      (row['confirmed_at'] as string) ?? null,
+      resolvedAt:       (row['resolved_at'] as string) ?? null,
+      evidence:         row['evidence'],
+      deviceId:         (row['device_id'] as string) ?? null,
+    };
+  });
+}

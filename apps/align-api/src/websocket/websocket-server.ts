@@ -20,7 +20,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { IncomingMessage } from 'http';
 import type { Server as HttpServer } from 'http';
-import { createClient } from '@supabase/supabase-js';
+import { buildUserClient } from '../lib/supabase-client';
 import type { WsClientFrame, WsServerFrame } from '@cav-align/core';
 import { rootLogger } from '../lib/logger';
 import { randomUUID } from 'crypto';
@@ -46,15 +46,9 @@ interface AuthenticatedSocket {
 // ---------------------------------------------------------------------------
 
 async function validateWsToken(token: string): Promise<{ tenantId: string; userId: string } | null> {
-  const url    = process.env['SUPABASE_URL'];
-  const anon   = process.env['SUPABASE_ANON_KEY'];
-  if (!url || !anon) return null;
-
   try {
-    const supabase = createClient(url, anon, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
+    const supabase = buildUserClient(token);
+    if (!supabase) return null;
 
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return null;

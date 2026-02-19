@@ -10,21 +10,15 @@
 
 import type { Router } from 'express';
 import { Router as createRouter } from 'express';
-import { createClient } from '@supabase/supabase-js';
+import { buildUserClient } from '../lib/supabase-client';
 
 export function createExpectedDivergenceRouter(): Router {
   const router = createRouter();
 
   function getUserClient(authHeader: string | undefined) {
-    const url  = process.env['SUPABASE_URL'];
-    const anon = process.env['SUPABASE_ANON_KEY'];
-    if (!url || !anon) return null;
     const token = authHeader?.replace('Bearer ', '');
     if (!token) return null;
-    return createClient(url, anon, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
+    return buildUserClient(token);
   }
 
   // POST /

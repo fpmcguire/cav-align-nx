@@ -148,3 +148,40 @@ export class ObservedTruthStore {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Read methods (user-scoped — respects RLS)
+// ---------------------------------------------------------------------------
+
+import { buildUserClient } from '../lib/supabase-client';
+
+export interface SourceDto {
+  id:             string;
+  sourceIdentifier: string;
+  status:         string;
+  lastMessageAt:  string | null;
+  messageCount:   number;
+}
+
+export async function listSources(token: string): Promise<SourceDto[]> {
+  const supabase = buildUserClient(token);
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from('sources')
+    .select('id, source_identifier, status, last_message_at, message_count')
+    .order('last_message_at', { ascending: false });
+
+  if (error) {
+    rootLogger.error('listSources failed', error);
+    throw new Error('Failed to fetch sources');
+  }
+
+  return (data ?? []).map((row: Record<string, unknown>) => ({
+    id:               row['id'] as string,
+    sourceIdentifier: row['source_identifier'] as string,
+    status:           row['status'] as string,
+    lastMessageAt:    (row['last_message_at'] as string) ?? null,
+    messageCount:     (row['message_count'] as number) ?? 0,
+  }));
+}

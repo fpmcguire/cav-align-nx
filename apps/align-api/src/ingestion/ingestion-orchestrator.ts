@@ -15,7 +15,8 @@
  * Engines are pure. Stores are the only DB layer.
  */
 
-import type { NormalizedMessage, ProtocolConnection } from '@cav-align/core';
+import type { NormalizedMessage, ProtocolConnection, TenantContext } from '@cav-align/core';
+import { hasModule } from '@cav-align/core';
 import type { AlignWebSocketServer } from '../websocket/websocket-server';
 import type { ModuleRegistry } from '../modules/module-registry';
 import { ObservedTruthEngine } from '../engines/observed-truth/observed-truth-engine';
@@ -61,7 +62,17 @@ export class IngestionOrchestrator {
     private readonly stores?:        OrchestratorStores,
   ) {}
 
-  async startIngestion(connection: ProtocolConnection): Promise<void> {
+  async startIngestion(
+    connection: ProtocolConnection,
+    tenantContext?: TenantContext,
+  ): Promise<void> {
+    // ── Entitlement check ────────────────────────────────────────────────
+    if (tenantContext && !hasModule(tenantContext, connection.protocol)) {
+      throw new Error(
+        `Tenant '${tenantContext.tenant.id}' does not have an active ${connection.protocol.toUpperCase()} module subscription`,
+      );
+    }
+
     const adapter = this.moduleRegistry.getOrCreateAdapter(connection);
 
     const isConnected = await new Promise<boolean>((resolve) => {

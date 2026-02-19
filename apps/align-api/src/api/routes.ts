@@ -1,11 +1,12 @@
 /**
  * routes.ts
  *
- * Thin route controllers — no tenant derivation logic.
+ * Thin route controllers — no tenant derivation, no direct Supabase access.
  * All routes protected by tenantAuthMiddleware.
  * tenantId always comes from req.tenantContext.
+ * All DB access via store layer only.
  *
- * CAV Level 1 hardening — Section 2 (Routes) of Hardening Directive.
+ * CAV Level 1 hardening — Session A complete.
  */
 
 import type { Express } from 'express';
@@ -14,19 +15,24 @@ import type { IngestionOrchestrator } from '../ingestion/ingestion-orchestrator'
 import type { AlignWebSocketServer } from '../websocket/websocket-server';
 import { tenantAuthMiddleware } from '../middleware/auth.middleware';
 import { createExpectedDivergenceRouter } from './expected-divergence.routes';
-import { createClient } from '@supabase/supabase-js';
+import { listDivergenceEvents } from '../stores/divergence.store';
+import { listSources } from '../stores/observed-truth.store';
+import { ConnectionStore } from '../stores/connection.store';
+import { getSupabaseClient } from '../lib/supabase-client';
+import { hasModule } from '@cav-align/core';
+import type { ProtocolType } from '@cav-align/core';
 
 export interface ApiDependencies {
-  moduleRegistry:       ModuleRegistry;
+  moduleRegistry:        ModuleRegistry;
   ingestionOrchestrator: IngestionOrchestrator;
-  wsServer:             AlignWebSocketServer;
+  wsServer:              AlignWebSocketServer;
 }
 
 export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
-  const { moduleRegistry } = deps;
+  const { moduleRegistry, ingestionOrchestrator } = deps;
 
-  // Public — no auth
-  app.get('/api', (req, res) => {
+  // ── Public — no auth ─────────────────────────────────────────────────────
+  app.get('/api', (_req, res) => {
     res.json({
       service:             'align-api',
       version:             '1.1.0',
@@ -35,92 +41,141 @@ export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
     });
   });
 
-  // All routes below require valid JWT + tenant
+  // ── Expected divergences ─────────────────────────────────────────────────
   app.use('/api/expected-divergences', tenantAuthMiddleware, createExpectedDivergenceRouter());
 
+  // ── Divergence events ─────────────────────────────────────────────────────
   app.get('/api/divergence', tenantAuthMiddleware, async (req, res) => {
-    const tenantId = req.tenantContext?.tenant?.id;
-    const url      = process.env['SUPABASE_URL'];
-    const key      = process.env['SUPABASE_ANON_KEY'];
-    const token    = req.headers.authorization?.replace('Bearer ', '');
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
-    if (!url || !key || !token) {
-      return res.status(501).json({ events: [], message: 'Supabase not configured' });
-    }
-
-    const supabase = createClient(url, key, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-
-    let query = supabase
-      .from('divergence_events')
-      .select(`
-        id, dimension, status, onset_estimated_at, confirmed_at, resolved_at,
-        evidence, device_id,
-        sources!inner(source_identifier, tenant_id)
-      `)
-      .order('onset_estimated_at', { ascending: false })
-      .limit(100);
-
-    if (req.query['status'])    query = query.eq('status',    req.query['status'] as string);
-    if (req.query['dimension']) query = query.eq('dimension', req.query['dimension'] as string);
-
-    const { data, error } = await query;
-
-    if (error) {
-      req.log.error('Failed to fetch divergence events', error, { tenantId });
+    try {
+      const events = await listDivergenceEvents(token, {
+        status:    req.query['status']    as string | undefined,
+        dimension: req.query['dimension'] as string | undefined,
+      });
+      return res.json({ events });
+    } catch {
+      req.log.error('Failed to fetch divergence events', undefined, {
+        tenantId: req.tenantContext?.tenant?.id,
+      });
       return res.status(500).json({ error: 'Failed to fetch divergence events' });
     }
-
-    return res.json({ events: (data ?? []).map(divergenceRowToDto) });
   });
 
+  // ── Sources ───────────────────────────────────────────────────────────────
   app.get('/api/sources', tenantAuthMiddleware, async (req, res) => {
-    const url   = process.env['SUPABASE_URL'];
-    const key   = process.env['SUPABASE_ANON_KEY'];
     const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
-    if (!url || !key || !token) {
-      return res.status(501).json({ sources: [], message: 'Supabase not configured' });
-    }
-
-    const supabase = createClient(url, key, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-
-    const { data, error } = await supabase
-      .from('sources')
-      .select('id, source_identifier, status, last_message_at, message_count')
-      .order('last_message_at', { ascending: false });
-
-    if (error) {
-      req.log.error('Failed to fetch sources', error);
+    try {
+      const sources = await listSources(token);
+      return res.json({ sources });
+    } catch {
+      req.log.error('Failed to fetch sources', undefined, {
+        tenantId: req.tenantContext?.tenant?.id,
+      });
       return res.status(500).json({ error: 'Failed to fetch sources' });
     }
-
-    return res.json({ sources: data ?? [] });
   });
 
-  // Stubs — not in v1.1 scope
-  app.post('/api/connections', (req, res) => res.status(501).json({ error: 'Not implemented' }));
-  app.get('/api/connections',  (req, res) => res.status(501).json({ error: 'Not implemented' }));
-  app.post('/api/sessions',    (req, res) => res.status(501).json({ error: 'Not implemented' }));
-  app.get('/api/sessions',     (req, res) => res.status(501).json({ error: 'Not implemented' }));
+  // ── Connections ───────────────────────────────────────────────────────────
 
-  console.log('[API] Routes registered (v1.1.0 hardened)');
-}
+  app.post('/api/connections', tenantAuthMiddleware, async (req, res) => {
+    const { tenantContext } = req;
+    const { name, protocol, config, credentials } = req.body as {
+      name:        string;
+      protocol:    ProtocolType;
+      config:      Record<string, unknown>;
+      credentials: Record<string, unknown>;
+    };
 
-function divergenceRowToDto(row: Record<string, unknown>) {
-  const source = row['sources'] as Record<string, unknown> | null;
-  return {
-    id:               row['id'],
-    dimension:        row['dimension'],
-    status:           row['status'],
-    sourceIdentifier: source?.['source_identifier'] ?? null,
-    onsetEstimatedAt: row['onset_estimated_at'],
-    confirmedAt:      row['confirmed_at'],
-    resolvedAt:       row['resolved_at'],
-    evidence:         row['evidence'],
-    deviceId:         row['device_id'],
-  };
+    // Validate required fields
+    if (!name || !protocol || !config || !credentials) {
+      return res.status(400).json({ error: 'name, protocol, config and credentials are required' });
+    }
+
+    const validProtocols: ProtocolType[] = ['mqtt', 'http', 'kafka'];
+    if (!validProtocols.includes(protocol)) {
+      return res.status(400).json({ error: `Invalid protocol: ${protocol}` });
+    }
+
+    // ── Entitlement check ──────────────────────────────────────────────────
+    if (!hasModule(tenantContext, protocol)) {
+      req.log.warn('Entitlement denied — no subscription for protocol', {
+        tenantId: tenantContext.tenant.id,
+        protocol,
+      });
+      return res.status(403).json({
+        error: `Your subscription does not include the ${protocol.toUpperCase()} module`,
+      });
+    }
+
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      return res.status(501).json({ error: 'Supabase not configured' });
+    }
+
+    const store = new ConnectionStore(supabase);
+
+    try {
+      const connection = await store.create({
+        tenantId:    tenantContext.tenant.id,
+        name,
+        protocol,
+        config,
+        credentials,
+        createdBy:   tenantContext.user.id,
+      });
+
+      if (!connection) {
+        return res.status(500).json({ error: 'Failed to create connection' });
+      }
+
+      req.log.info('Connection created', {
+        tenantId:     tenantContext.tenant.id,
+        connectionId: connection.id,
+        protocol,
+      });
+
+      return res.status(201).json(connection);
+    } catch (err) {
+      // encryptCredentials throws if CREDENTIAL_ENCRYPTION_KEY is not set
+      const message = err instanceof Error ? err.message : 'Failed to create connection';
+      req.log.error('Connection create failed', err, { tenantId: tenantContext.tenant.id });
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  app.get('/api/connections', tenantAuthMiddleware, async (req, res) => {
+    const supabase = getSupabaseClient();
+    if (!supabase) return res.status(501).json({ error: 'Supabase not configured' });
+
+    const store = new ConnectionStore(supabase);
+    const connections = await store.list(req.tenantContext.tenant.id);
+    return res.json({ connections });
+  });
+
+  app.delete('/api/connections/:id', tenantAuthMiddleware, async (req, res) => {
+    const supabase = getSupabaseClient();
+    if (!supabase) return res.status(501).json({ error: 'Supabase not configured' });
+
+    const store = new ConnectionStore(supabase);
+    const deleted = await store.delete(req.tenantContext.tenant.id, req.params.id);
+
+    if (!deleted) return res.status(404).json({ error: 'Connection not found' });
+
+    req.log.info('Connection deleted', {
+      tenantId:     req.tenantContext.tenant.id,
+      connectionId: req.params.id,
+    });
+
+    return res.status(204).send();
+  });
+
+  // ── Sessions (stub — ingestion lifecycle managed internally) ──────────────
+  app.post('/api/sessions', (req, res) => res.status(501).json({ error: 'Not implemented' }));
+  app.get('/api/sessions',  (req, res) => res.status(501).json({ error: 'Not implemented' }));
+
+  console.log('[API] Routes registered (v1.1.0 — Session A hardened)');
 }

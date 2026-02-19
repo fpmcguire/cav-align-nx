@@ -15,7 +15,7 @@
 
 import type { Request, Response, NextFunction } from 'express';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { createClient } from '@supabase/supabase-js';
+import { buildUserClient } from '../lib/supabase-client';
 import { randomUUID } from 'crypto';
 import type { TenantContext, ModuleLimits, ModuleUsage } from '@cav-align/core';
 import { rootLogger } from '../lib/logger';
@@ -23,16 +23,7 @@ import { rootLogger } from '../lib/logger';
 // ---------------------------------------------------------------------------
 // Build a user-scoped Supabase client from a bearer token
 // ---------------------------------------------------------------------------
-function buildUserClient(token: string): SupabaseClient | null {
-  const url = process.env['SUPABASE_URL'];
-  const anon = process.env['SUPABASE_ANON_KEY'];
-  if (!url || !anon) return null;
-
-  return createClient(url, anon, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
+// buildUserClient imported from lib/supabase-client
 
 // ---------------------------------------------------------------------------
 // Middleware
@@ -40,11 +31,11 @@ function buildUserClient(token: string): SupabaseClient | null {
 export async function tenantAuthMiddleware(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> {
   const requestId = randomUUID();
-  req.requestId = requestId;
-  req.log = rootLogger.child({ requestId });
+  req.requestId   = requestId;
+  req.log         = rootLogger.child({ requestId });
 
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
@@ -64,10 +55,7 @@ export async function tenantAuthMiddleware(
   }
 
   // Validate JWT
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) {
     req.log.warn('JWT validation failed', { error: userError?.message });
     res.status(401).json({ error: 'Invalid or expired token' });
@@ -87,7 +75,7 @@ export async function tenantAuthMiddleware(
     return;
   }
 
-  const tenantRow = tenantUserRow['tenants'] as unknown as Record<string, unknown> | null;
+  const tenantRow = (tenantUserRow['tenants'] as unknown) as Record<string, unknown> | null;
 
   // Resolve module subscriptions
   const { data: subs } = await supabase
@@ -99,22 +87,22 @@ export async function tenantAuthMiddleware(
   const context: TenantContext = {
     user,
     tenant: {
-      id: tenantUserRow.tenant_id,
+      id:               tenantUserRow.tenant_id,
       organizationName: (tenantRow?.['organization_name'] as string) ?? '',
-      createdAt: (tenantRow?.['created_at'] as string) ?? '',
+      createdAt:        (tenantRow?.['created_at'] as string) ?? '',
     },
     subscriptions: (subs ?? []).map((s: Record<string, unknown>) => ({
-      id: s['id'] as string,
-      tenantId: s['tenant_id'] as string,
-      moduleName: s['module_name'] as string,
-      status: s['status'] as 'active' | 'trial' | 'suspended' | 'canceled',
-      tier: s['tier'] as 'starter' | 'professional' | 'enterprise' | 'custom',
-      limits: (s['limits'] as ModuleLimits) ?? ({} as ModuleLimits),
-      usage: (s['usage'] as ModuleUsage) ?? ({} as ModuleUsage),
-      startedAt: s['started_at'] as string,
-      expiresAt: s['expires_at'] as string | undefined,
-      trialEndsAt: s['trial_ends_at'] as string | undefined,
-      usageResetAt: s['usage_reset_at'] as string,
+      id:             s['id'] as string,
+      tenantId:       s['tenant_id'] as string,
+      moduleName:     s['module_name'] as string,
+      status:         s['status'] as 'active' | 'trial' | 'suspended' | 'canceled',
+      tier:           s['tier'] as 'starter' | 'professional' | 'enterprise' | 'custom',
+      limits:         (s['limits'] as ModuleLimits) ?? ({} as ModuleLimits),
+      usage:          (s['usage'] as ModuleUsage) ?? ({} as ModuleUsage),
+      startedAt:      s['started_at'] as string,
+      expiresAt:      s['expires_at'] as string | undefined,
+      trialEndsAt:    s['trial_ends_at'] as string | undefined,
+      usageResetAt:   s['usage_reset_at'] as string,
     })),
   };
 
@@ -124,7 +112,7 @@ export async function tenantAuthMiddleware(
   req.log = rootLogger.child({
     requestId,
     tenantId: context.tenant.id,
-    userId: user.id,
+    userId:   user.id,
   });
 
   req.log.debug('Request authenticated', { method: req.method, path: req.path });
