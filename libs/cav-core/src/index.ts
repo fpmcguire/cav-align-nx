@@ -160,3 +160,60 @@ export type {
 } from './lib/ot-config';
 
 export { DEFAULT_ALIGN_CONFIG } from './lib/ot-config';
+
+// ---------------------------------------------------------------------------
+// CAV Level 3 — Intent Registry (v2)
+// ---------------------------------------------------------------------------
+
+export type {
+  IntentArtifactStatus,
+  IntentVersionStatus,
+  ShapeIntentDefinition,
+  CadenceIntentDefinition,
+  NumericConstraint,
+  CategoricalConstraint,
+  DomainIntentDefinition,
+  IntentDefinition,
+  IntentVersion,
+  IntentVersionSummary,
+  IntentArtifact,
+  IntentArtifactSummary,
+  ProjectedIntention,
+  CreateIntentArtifactRequest,
+  CreateIntentVersionRequest,
+} from './lib/intent';
+
+// ---------------------------------------------------------------------------
+// CAV Level 4 — Formal Alignment Deltas (v2)
+// ---------------------------------------------------------------------------
+
+export type {
+  ViolationKind,
+  DeltaViolation,
+  ShapePenaltyBreakdown,
+  CadencePenaltyBreakdown,
+  DomainPenaltyBreakdown,
+  ShapeDeltaDetail,
+  CadenceDeltaDetail,
+  DomainDeltaDetail,
+  DeltaDetail,
+  DeltaResult,
+  AlignmentDelta,
+  AlignmentDeltaSummary,
+} from './lib/delta';
+
+// ---------------------------------------------------------------------------
+// CAV Level 4 — Envelope Breaches + Level 6 scaffolding (v2)
+// ---------------------------------------------------------------------------
+
+export type {
+  BreachSeverity,
+  BreachEvidence,
+  EnvelopeAssessment,
+  BreachStatus,
+  EnvelopeBreach,
+  EnvelopeBreachSummary,
+  ConvergenceEffectiveness,
+  ConvergenceAction,
+  CreateConvergenceActionRequest,
+} from './lib/breach';

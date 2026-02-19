@@ -15,6 +15,8 @@ import type { TopicSummary } from './topic';
 import type { DivergenceEventSummary } from './divergence';
 import type { SessionStats } from './session';
 import type { BrokerConnectionStatus } from './broker';
+import type { DivergenceDimension } from './divergence';
+import type { BreachSeverity } from './breach';
 
 // ---------------------------------------------------------------------------
 // Client → Server
@@ -105,4 +107,58 @@ export type WsServerFrame =
   | WsSessionStatsFrame
   | WsBrokerStatusFrame
   | WsStatusFrame
-  | WsPongFrame;
+  | WsPongFrame
+  // CAV Level 4 — v2 frames
+  | WsBreachDetectedFrame
+  | WsBreachResolvedFrame
+  | WsIntentUpdatedFrame;
+
+// ---------------------------------------------------------------------------
+// CAV Level 4 — Server → Client (v2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Emitted when an envelope breach is first opened.
+ * Includes reason string from delta_detail so the UI can display it
+ * without a secondary API call.
+ */
+export interface WsBreachDetectedFrame {
+  readonly type: 'breach:detected';
+  readonly tenantId: string;
+  readonly breachId: string;
+  readonly intentVersionId: string;
+  readonly topicScope: string;
+  readonly dimension: DivergenceDimension;
+  readonly severity: BreachSeverity;
+  readonly deltaValue: number;
+  /** Human-readable reason from delta_detail.reason. */
+  readonly reason: string;
+  readonly breachedAt: string;  // ISO 8601
+}
+
+/**
+ * Emitted when an active breach is resolved (delta returns within envelope).
+ */
+export interface WsBreachResolvedFrame {
+  readonly type: 'breach:resolved';
+  readonly tenantId: string;
+  readonly breachId: string;
+  readonly topicScope: string;
+  readonly dimension: DivergenceDimension;
+  readonly resolvedAt: string;    // ISO 8601
+  readonly finalDeltaValue: number;
+}
+
+/**
+ * Emitted when an intent artifact version is activated.
+ * Allows the Angular frontend to refresh intent state reactively.
+ */
+export interface WsIntentUpdatedFrame {
+  readonly type: 'intent:updated';
+  readonly tenantId: string;
+  readonly artifactId: string;
+  readonly topicScope: string;
+  readonly dimension: DivergenceDimension;
+  readonly newVersionNumber: number;
+  readonly effectiveFrom: string;  // ISO 8601
+}
