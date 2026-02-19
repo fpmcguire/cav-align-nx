@@ -25,7 +25,7 @@ export interface Logger {
   info(message: string, context?: Record<string, unknown>): void;
   warn(message: string, context?: Record<string, unknown>): void;
   error(message: string, error?: unknown, context?: Record<string, unknown>): void;
-  child(bindings: { requestId?: string; tenantId?: string; userId?: string }): Logger;
+  child(bindings: { requestId?: string; tenantId?: string; userId?: string; context?: string }): Logger;
 }
 
 function formatError(err: unknown): string | undefined {
@@ -38,14 +38,17 @@ function createLogger(bindings: {
   requestId?: string;
   tenantId?: string;
   userId?: string;
+  context?: string;
 } = {}): Logger {
   function write(level: LogLevel, message: string, context?: Record<string, unknown>, err?: unknown): void {
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
-      ...bindings,
+      requestId: bindings.requestId,
+      tenantId: bindings.tenantId,
+      userId: bindings.userId,
       message,
-      ...(context ? { context } : {}),
+      ...(context || bindings.context ? { context: { ...(bindings.context ? { logger: bindings.context } : {}), ...context } } : {}),
       ...(err !== undefined ? { error: formatError(err) } : {}),
     };
     const line = JSON.stringify(entry);
