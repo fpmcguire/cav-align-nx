@@ -51,10 +51,17 @@ export interface OrchestratorStores {
   session:            SessionStore;
 }
 
+export interface OrchestratorStats {
+  activeSessions:  number;
+  lastMessageAt:   string | null;
+}
+
 export class IngestionOrchestrator {
   private readonly otEngine   = new ObservedTruthEngine();
   private readonly divEngine  = new DivergenceEngine();
   private readonly matcher    = new ExpectedDivergenceMatcher();
+  private readonly activeSessions = new Set<string>();
+  private lastMessageAt: string | null = null;
 
   constructor(
     private readonly moduleRegistry: ModuleRegistry,
@@ -94,6 +101,8 @@ export class IngestionOrchestrator {
       startedAt:    new Date().toISOString(),
     });
 
+    this.activeSessions.add(connection.id);
+
     adapter.messages$.subscribe({
       next:  (msg) => void this.processMessage(msg),
       error: (err) => log.error(`Stream error for ${connection.id}`, err),
@@ -103,6 +112,7 @@ export class IngestionOrchestrator {
   }
 
   async stopIngestion(connectionId: string, tenantId: string): Promise<void> {
+    this.activeSessions.delete(connectionId);
     await this.moduleRegistry.disconnectAdapter(connectionId);
 
     await this.stores?.session.stopSession({
@@ -120,7 +130,15 @@ export class IngestionOrchestrator {
   // Pipeline
   // ---------------------------------------------------------------------------
 
+  getStats(): OrchestratorStats {
+    return {
+      activeSessions: this.activeSessions.size,
+      lastMessageAt:  this.lastMessageAt,
+    };
+  }
+
   private async processMessage(msg: NormalizedMessage): Promise<void> {
+    this.lastMessageAt = msg.timestamp;
     try {
       // ── 1. Observed Truth (pure) ──────────────────────────────────────────
       const otResult = this.otEngine.ingest(msg);

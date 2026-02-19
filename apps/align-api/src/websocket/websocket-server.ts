@@ -1,43 +1,44 @@
 /**
  * websocket-server.ts
  *
- * WebSocket server for pushing real-time updates to the Angular frontend.
- *
- * CAV Level 1 hardening — Section 4 of Hardening Directive.
- * - JWT validated during handshake via query param ?token=<jwt>
- * - Socket bound to tenantId on upgrade
- * - Unauthenticated connections rejected
- * - Tenant-scoped channel subscriptions
- *
- * Frames (Server → Client):
- *   topic:discovered, topic:status-changed, divergence:detected,
- *   divergence:resolved, session:stats, broker:status, pong, status
- *
- * Frames (Client → Server):
- *   subscribe, unsubscribe, ping
+ * CAV Level 1 hardening — complete.
+ * - JWT validated on HTTP upgrade
+ * - Socket bound to tenantId
+ * - Per-tenant message rate limiting (60 frames / 60s)
+ * - getStats() for health endpoint
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
 import type { IncomingMessage } from 'http';
 import type { Server as HttpServer } from 'http';
 import { buildUserClient } from '../lib/supabase-client';
+import { SlidingWindowRateLimiter } from '../lib/rate-limiter';
 import type { WsClientFrame, WsServerFrame } from '@cav-align/core';
 import { rootLogger } from '../lib/logger';
 import { randomUUID } from 'crypto';
 
 const log = rootLogger.child({ context: 'WebSocketServer' });
 
+// Per-tenant WS frame rate limit: 60 frames per 60 seconds
+const wsRateLimiter = new SlidingWindowRateLimiter({ maxRequests: 60, windowMs: 60_000 });
+
+export interface WsStats {
+  connectedClients: number;
+  tenants:          number;
+}
+
 export interface AlignWebSocketServer {
   broadcast(frame: WsServerFrame): void;
   broadcastToTenant(tenantId: string, frame: WsServerFrame): void;
   broadcastToSession(sessionId: string, frame: WsServerFrame): void;
+  getStats(): WsStats;
 }
 
 interface AuthenticatedSocket {
-  ws:       WebSocket;
-  tenantId: string;
-  userId:   string;
-  connId:   string;
+  ws:            WebSocket;
+  tenantId:      string;
+  userId:        string;
+  connId:        string;
   subscriptions: Set<string>;
 }
 
@@ -49,18 +50,11 @@ async function validateWsToken(token: string): Promise<{ tenantId: string; userI
   try {
     const supabase = buildUserClient(token);
     if (!supabase) return null;
-
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return null;
-
     const { data: tenantUser } = await supabase
-      .from('tenant_users')
-      .select('tenant_id')
-      .eq('user_id', user.id)
-      .single();
-
+      .from('tenant_users').select('tenant_id').eq('user_id', user.id).single();
     if (!tenantUser) return null;
-
     return { tenantId: tenantUser.tenant_id as string, userId: user.id };
   } catch {
     return null;
@@ -72,35 +66,24 @@ async function validateWsToken(token: string): Promise<{ tenantId: string; userI
 // ---------------------------------------------------------------------------
 
 export function setupWebSocketServer(httpServer: HttpServer): AlignWebSocketServer {
-  const wss = new WebSocketServer({ noServer: true });
-
-  // Authenticated clients keyed by connId
+  const wss     = new WebSocketServer({ noServer: true });
   const clients = new Map<string, AuthenticatedSocket>();
 
-  // ---------------------------------------------------------------------------
-  // HTTP upgrade — validate JWT before accepting WS
-  // ---------------------------------------------------------------------------
+  // ── HTTP upgrade — JWT required ──────────────────────────────────────────
   httpServer.on('upgrade', async (req: IncomingMessage, socket, head) => {
     const url = new URL(req.url ?? '', `http://${req.headers.host}`);
 
-    if (url.pathname !== '/ws') {
-      socket.destroy();
-      return;
-    }
+    if (url.pathname !== '/ws') { socket.destroy(); return; }
 
-    // Offline mode — no Supabase configured, accept without auth
     const supabaseConfigured = !!(process.env['SUPABASE_URL'] && process.env['SUPABASE_ANON_KEY']);
     if (!supabaseConfigured) {
+      // Offline mode — accept without auth
       wss.handleUpgrade(req, socket, head, (ws) => {
-        const connId = randomUUID();
         const entry: AuthenticatedSocket = {
-          ws,
-          tenantId: 'offline',
-          userId:   'offline',
-          connId,
-          subscriptions: new Set(),
+          ws, tenantId: 'offline', userId: 'offline',
+          connId: randomUUID(), subscriptions: new Set(),
         };
-        clients.set(connId, entry);
+        clients.set(entry.connId, entry);
         wss.emit('connection', ws, req, entry);
       });
       return;
@@ -123,31 +106,34 @@ export function setupWebSocketServer(httpServer: HttpServer): AlignWebSocketServ
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => {
-      const connId = randomUUID();
       const entry: AuthenticatedSocket = {
-        ws,
-        tenantId: auth.tenantId,
-        userId:   auth.userId,
-        connId,
-        subscriptions: new Set(),
+        ws, tenantId: auth.tenantId, userId: auth.userId,
+        connId: randomUUID(), subscriptions: new Set(),
       };
-      clients.set(connId, entry);
-      log.info('WS client connected', { tenantId: auth.tenantId, connId });
+      clients.set(entry.connId, entry);
+      log.info('WS client connected', { tenantId: auth.tenantId, connId: entry.connId });
       wss.emit('connection', ws, req, entry);
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Connection handler
-  // ---------------------------------------------------------------------------
+  // ── Connection handler ───────────────────────────────────────────────────
   wss.on('connection', (ws: WebSocket, _req: IncomingMessage, entry: AuthenticatedSocket) => {
-    const pong: WsServerFrame = { type: 'pong' };
-    ws.send(JSON.stringify(pong));
+    ws.send(JSON.stringify({ type: 'pong' } satisfies WsServerFrame));
 
     ws.on('message', (data: Buffer) => {
+      // Per-tenant rate limit on inbound frames
+      const limit = wsRateLimiter.check(entry.tenantId);
+      if (!limit.allowed) {
+        ws.send(JSON.stringify({
+          type: 'status', level: 'warn',
+          message: `Rate limit exceeded — retry in ${Math.ceil(limit.resetAfter / 1000)}s`,
+        } satisfies WsServerFrame));
+        return;
+      }
+
       try {
         const frame: WsClientFrame = JSON.parse(data.toString());
-        handleClientFrame(ws, frame, entry, log);
+        handleClientFrame(ws, frame, entry);
       } catch (err) {
         log.warn('Invalid WS frame', { connId: entry.connId, error: String(err) });
       }
@@ -159,33 +145,31 @@ export function setupWebSocketServer(httpServer: HttpServer): AlignWebSocketServ
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Public interface
-  // ---------------------------------------------------------------------------
+  // ── Public interface ─────────────────────────────────────────────────────
   return {
-    broadcast(frame: WsServerFrame): void {
+    broadcast(frame) {
       const payload = JSON.stringify(frame);
-      clients.forEach(({ ws }) => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(payload);
+      clients.forEach(({ ws }) => { if (ws.readyState === WebSocket.OPEN) ws.send(payload); });
+    },
+
+    broadcastToTenant(tenantId, frame) {
+      const payload = JSON.stringify(frame);
+      clients.forEach((e) => {
+        if (e.tenantId === tenantId && e.ws.readyState === WebSocket.OPEN) e.ws.send(payload);
       });
     },
 
-    broadcastToTenant(tenantId: string, frame: WsServerFrame): void {
+    broadcastToSession(sessionId, frame) {
       const payload = JSON.stringify(frame);
-      clients.forEach((entry) => {
-        if (entry.tenantId === tenantId && entry.ws.readyState === WebSocket.OPEN) {
-          entry.ws.send(payload);
-        }
+      clients.forEach((e) => {
+        if (e.subscriptions.has(sessionId) && e.ws.readyState === WebSocket.OPEN) e.ws.send(payload);
       });
     },
 
-    broadcastToSession(sessionId: string, frame: WsServerFrame): void {
-      const payload = JSON.stringify(frame);
-      clients.forEach((entry) => {
-        if (entry.subscriptions.has(sessionId) && entry.ws.readyState === WebSocket.OPEN) {
-          entry.ws.send(payload);
-        }
-      });
+    getStats(): WsStats {
+      const tenants = new Set<string>();
+      clients.forEach((e) => tenants.add(e.tenantId));
+      return { connectedClients: clients.size, tenants: tenants.size };
     },
   };
 }
@@ -194,43 +178,29 @@ export function setupWebSocketServer(httpServer: HttpServer): AlignWebSocketServ
 // Frame handler
 // ---------------------------------------------------------------------------
 
-function handleClientFrame(
-  ws: WebSocket,
-  frame: WsClientFrame,
-  entry: AuthenticatedSocket,
-  logger: typeof log,
-): void {
+function handleClientFrame(ws: WebSocket, frame: WsClientFrame, entry: AuthenticatedSocket): void {
   switch (frame.type) {
-    case 'subscribe': {
+    case 'subscribe':
       entry.subscriptions.add(frame.sessionId);
-      const status: WsServerFrame = {
-        type:    'status',
-        level:   'info',
+      ws.send(JSON.stringify({
+        type: 'status', level: 'info',
         message: `Subscribed to session ${frame.sessionId}`,
-      };
-      ws.send(JSON.stringify(status));
-      logger.debug('WS subscribed to session', { connId: entry.connId, sessionId: frame.sessionId });
+      } satisfies WsServerFrame));
       break;
-    }
 
-    case 'unsubscribe': {
+    case 'unsubscribe':
       entry.subscriptions.delete(frame.sessionId);
-      const status: WsServerFrame = {
-        type:    'status',
-        level:   'info',
+      ws.send(JSON.stringify({
+        type: 'status', level: 'info',
         message: `Unsubscribed from session ${frame.sessionId}`,
-      };
-      ws.send(JSON.stringify(status));
+      } satisfies WsServerFrame));
       break;
-    }
 
-    case 'ping': {
-      const pong: WsServerFrame = { type: 'pong' };
-      ws.send(JSON.stringify(pong));
+    case 'ping':
+      ws.send(JSON.stringify({ type: 'pong' } satisfies WsServerFrame));
       break;
-    }
 
     default:
-      logger.warn('Unknown WS frame type', { connId: entry.connId });
+      log.warn('Unknown WS frame type', { connId: entry.connId });
   }
 }

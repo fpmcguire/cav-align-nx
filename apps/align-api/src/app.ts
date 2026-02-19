@@ -1,19 +1,18 @@
 /**
  * app.ts
  *
- * Express application setup for CAV-Align backend (v1.1.0 — hardened).
+ * CAV Level 1 — Session B hardening complete.
  *
  * Startup order:
- *   1. Supabase service-role client
- *   2. Credential encryption check
- *   3. Store layer (all 5 stores — including ConnectionStore)
- *   4. WebSocket server (JWT-authenticated)
- *   5. Module registry + adapters
- *   6. Ingestion orchestrator (engines + stores injected)
- *   7. API routes (all protected by tenantAuthMiddleware)
- *   8. Expected divergence expiration checker
- *
- * CAV Level 1 — Session A hardening complete.
+ *   1. Supabase (service role) + encryption check
+ *   2. Store layer (5 stores)
+ *   3. WebSocket server (JWT auth + per-tenant rate limiting)
+ *   4. Module registry
+ *   5. Ingestion orchestrator
+ *   6. Global HTTP rate limiting
+ *   7. API routes
+ *   8. Health endpoint (full subsystem detail)
+ *   9. Expected divergence expiration checker
  */
 
 import express, { type Express } from 'express';
@@ -27,6 +26,7 @@ import { initializeModules } from './modules/initialize-modules';
 import { IngestionOrchestrator } from './ingestion/ingestion-orchestrator';
 import { getSupabaseClient } from './lib/supabase-client';
 import { rootLogger } from './lib/logger';
+import { rateLimitMiddleware } from './middleware/rate-limit.middleware';
 import { ObservedTruthStore } from './stores/observed-truth.store';
 import { DivergenceStore } from './stores/divergence.store';
 import { ExpectedDivergenceStore } from './stores/expected-divergence.store';
@@ -38,38 +38,27 @@ const log = rootLogger.child({ context: 'app' });
 
 export async function startServer(port: number | string): Promise<HttpServer> {
   const app: Express = express();
-  const httpServer = createServer(app);
+  const httpServer   = createServer(app);
 
   app.use(cors());
   app.use(express.json());
 
-  // Attach requestId + logger to every request (even unauthenticated)
+  // Attach requestId + base logger to every request
   app.use((req, _res, next) => {
     req.requestId = randomUUID();
-    req.log = rootLogger.child({ requestId: req.requestId });
+    req.log       = rootLogger.child({ requestId: req.requestId });
     next();
   });
 
-  app.get('/health', (_req, res) => {
-    res.json({
-      status:  'ok',
-      service: 'align-api',
-      version: '1.1.0',
-      supabase: !!getSupabaseClient(),
-    });
-  });
-
-  // ── 1. Supabase (service role) ──────────────────────────────────────────
+  // ── 1. Supabase + encryption ────────────────────────────────────────────
   const supabase = getSupabaseClient();
-
   if (supabase) {
     log.info('Supabase service-role client initialised');
   } else {
     log.warn('Supabase not configured — running in offline/in-memory mode');
   }
-
   if (!isEncryptionConfigured()) {
-    log.warn('CREDENTIAL_ENCRYPTION_KEY not set — broker credential encryption disabled. Set this before accepting connections in production.');
+    log.warn('CREDENTIAL_ENCRYPTION_KEY not set — set before accepting connections in production');
   } else {
     log.info('Credential encryption configured');
   }
@@ -82,7 +71,7 @@ export async function startServer(port: number | string): Promise<HttpServer> {
     session:            new SessionStore(supabase),
   } : undefined;
 
-  // ── 3. WebSocket server (JWT auth on upgrade) ───────────────────────────
+  // ── 3. WebSocket server ─────────────────────────────────────────────────
   const wsServer = setupWebSocketServer(httpServer);
 
   // ── 4. Module registry ──────────────────────────────────────────────────
@@ -92,19 +81,47 @@ export async function startServer(port: number | string): Promise<HttpServer> {
   // ── 5. Ingestion orchestrator ───────────────────────────────────────────
   const ingestionOrchestrator = new IngestionOrchestrator(moduleRegistry, wsServer, stores);
 
-  // ── 6. API routes ───────────────────────────────────────────────────────
+  // ── 6. Global HTTP rate limiting ────────────────────────────────────────
+  app.use(rateLimitMiddleware);
+
+  // ── 7. Health endpoint (full subsystem detail) ──────────────────────────
+  app.get('/health', (_req, res) => {
+    const wsStats  = wsServer.getStats();
+    const orchStats = ingestionOrchestrator.getStats();
+
+    res.json({
+      status:           'ok',
+      service:          'align-api',
+      version:          '1.1.0',
+      timestamp:        new Date().toISOString(),
+      subsystems: {
+        supabase: {
+          configured:   !!supabase,
+        },
+        encryption: {
+          configured:   isEncryptionConfigured(),
+        },
+        websocket: {
+          connectedClients: wsStats.connectedClients,
+          activeTenants:    wsStats.tenants,
+        },
+        ingestion: {
+          activeSessions:  orchStats.activeSessions,
+          lastMessageAt:   orchStats.lastMessageAt,
+          protocols:       moduleRegistry.getRegisteredProtocols(),
+        },
+      },
+    });
+  });
+
+  // ── 8. API routes ───────────────────────────────────────────────────────
   setupApiRoutes(app, { moduleRegistry, ingestionOrchestrator, wsServer });
 
-  // ── 7. Expected divergence expiration checker ───────────────────────────
+  // ── 9. Expected divergence expiration checker ───────────────────────────
   if (stores) {
-    // We need tenant IDs to check — for now we use service-role to fetch all tenants
-    // and check expiry per tenant. This is correct: service-role operates across tenants
-    // but expiry logic is tenant-scoped within the store method.
     const runExpirationCheck = async () => {
       try {
-        const { data: tenants } = await supabase!
-          .from('tenants')
-          .select('id');
+        const { data: tenants } = await supabase!.from('tenants').select('id');
         for (const t of tenants ?? []) {
           await stores.expectedDivergence.markExpiredAsMissed(t.id as string);
         }
