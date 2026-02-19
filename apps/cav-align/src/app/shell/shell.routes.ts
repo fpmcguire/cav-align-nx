@@ -22,6 +22,20 @@ export const shellRoutes: Route[] = [
       import('../features/divergence/divergence-log.page').then((m) => m.DivergenceLogPage),
   },
   {
+    path: 'expected-divergences',
+    loadComponent: () =>
+      import('../features/expected-divergence/expected-divergence-list.page').then(
+        (m) => m.ExpectedDivergenceListPage,
+      ),
+  },
+  {
+    path: 'expected-divergences/create',
+    loadComponent: () =>
+      import('../features/expected-divergence/create-expected-divergence.page').then(
+        (m) => m.CreateExpectedDivergencePage,
+      ),
+  },
+  {
     path: 'connections',
     loadComponent: () =>
       import('../features/connections/connections.page').then((m) => m.ConnectionsPage),

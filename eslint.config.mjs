@@ -60,7 +60,7 @@ export default [
         'error',
         {
           enforceBuildableLibDependency: true,
-          allow: [],
+          allow: ['^.*/eslint(\\.base)?\\.config\\.[cm]?[jt]s$'],
           depConstraints: [
             {
               sourceTag: 'type:domain',
@@ -84,6 +84,21 @@ export default [
                 'type:feature',
                 'type:data-access',
                 'type:domain',
+                'type:shared'
+              ]
+            },
+            {
+              sourceTag: 'type:backend',
+              onlyDependOnLibsWithTags: [
+                'type:core',
+                'type:module',
+                'type:shared'
+              ]
+            },
+            {
+              sourceTag: 'type:module',
+              onlyDependOnLibsWithTags: [
+                'type:core',
                 'type:shared'
               ]
             }

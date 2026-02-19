@@ -1,160 +1,35 @@
 /**
  * observed-truth-engine.ts
  *
- * CAV Level 1 - Observed Truth Inference Engine
+ * CAV Level 1 — Observed Truth Inference Engine.
  *
- * Continuously derives Observed Truth across three dimensions:
- *   - Shape: Structural fingerprint of JSON payloads
- *   - Cadence: Temporal pattern of message arrival
- *   - Domain: Value ranges and categorical profiles
+ * Ingests NormalizedMessages, builds Shape / Cadence / Domain profiles,
+ * and establishes Observed Truth once the criteria are met.
  *
- * This is the core intelligence of CAV-Align.
+ * Persistence: Supabase (observed_truths, sources tables).
+ * Broadcast:   WebSocket (topic:status-changed).
  */
 
 import type { NormalizedMessage, ObservedTruth } from '@cav-align/core';
+import { DEFAULT_ALIGN_CONFIG } from '@cav-align/core';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { AlignWebSocketServer } from '../../websocket/websocket-server';
+import { ShapeAggregator } from './shape-extractor';
+import { CadenceAccumulator } from './cadence-calculator';
+import { DomainProfiler } from './domain-profiler';
 
 export interface OtUpdateResult {
   sourceId: string;
   established: boolean;
   observedTruth?: ObservedTruth;
+  dbObservedTruthId?: string;
+  dbSourceId?: string;
 }
 
-/**
- * The Observed Truth inference engine.
- * 
- * TODO (Step 4 continuation):
- *   - Implement Shape extraction (field paths, types, presence rates)
- *   - Implement Cadence statistics (inter-arrival quantiles)
- *   - Implement Domain profiling (numeric ranges, categorical values)
- *   - Implement OT establishment logic (sample count + time window)
- *   - Persist to Supabase
- */
-export class ObservedTruthEngine {
-  // In-memory state for OT inference (will move to Supabase)
-  private readonly sourceStates = new Map<string, SourceInferenceState>();
+// ---------------------------------------------------------------------------
+// Internal state
+// ---------------------------------------------------------------------------
 
-  /**
-   * Ingest a normalized message and update Observed Truth.
-   */
-  async ingest(msg: NormalizedMessage): Promise<OtUpdateResult> {
-    const sourceKey = this.getSourceKey(msg.tenantId, msg.connectionId, msg.sourceId);
-    
-    let state = this.sourceStates.get(sourceKey);
-    if (!state) {
-      state = this.createSourceState(msg);
-      this.sourceStates.set(sourceKey, state);
-    }
-
-    // Update inference state
-    this.updateShapeInference(state, msg.payload);
-    this.updateCadenceInference(state, msg.timestamp);
-    this.updateDomainInference(state, msg.payload);
-
-    state.messageCount++;
-
-    // Check if OT should be established
-    const shouldEstablish = this.shouldEstablishOT(state);
-    
-    if (shouldEstablish && !state.established) {
-      state.established = true;
-      state.establishedAt = new Date().toISOString();
-      
-      // TODO: Build ObservedTruth object from state
-      // TODO: Persist to Supabase
-      
-      console.log(`[ObservedTruthEngine] OT established for source: ${msg.sourceId}`);
-    }
-
-    return {
-      sourceId: msg.sourceId,
-      established: state.established,
-      // observedTruth: state.established ? this.buildOT(state) : undefined,
-    };
-  }
-
-  private getSourceKey(tenantId: string, connectionId: string, sourceId: string): string {
-    return `${tenantId}:${connectionId}:${sourceId}`;
-  }
-
-  private createSourceState(msg: NormalizedMessage): SourceInferenceState {
-    return {
-      tenantId: msg.tenantId,
-      connectionId: msg.connectionId,
-      sourceId: msg.sourceId,
-      protocol: msg.metadata.protocol,
-      firstSeenAt: msg.timestamp,
-      lastSeenAt: msg.timestamp,
-      messageCount: 0,
-      established: false,
-      
-      // Shape state
-      observedFields: new Map(),
-      
-      // Cadence state
-      interArrivalTimes: [],
-      lastMessageTimestamp: null,
-      
-      // Domain state
-      numericFields: new Map(),
-      categoricalFields: new Map(),
-    };
-  }
-
-  private updateShapeInference(state: SourceInferenceState, payload: unknown): void {
-    // TODO: Implement Shape extraction
-    // - Extract field paths from JSON payload
-    // - Track field types (string, number, boolean, null, object, array)
-    // - Track presence rates per field
-    // - Detect structural variants
-  }
-
-  private updateCadenceInference(state: SourceInferenceState, timestamp: string): void {
-    // TODO: Implement Cadence statistics
-    // - Calculate inter-arrival time from last message
-    // - Maintain rolling window of intervals
-    // - Compute mean, stddev, p5, p95, min, max
-    
-    if (state.lastMessageTimestamp) {
-      const lastMs = new Date(state.lastMessageTimestamp).getTime();
-      const currentMs = new Date(timestamp).getTime();
-      const intervalMs = currentMs - lastMs;
-      
-      state.interArrivalTimes.push(intervalMs);
-      
-      // Keep only last 1000 intervals (configurable)
-      if (state.interArrivalTimes.length > 1000) {
-        state.interArrivalTimes.shift();
-      }
-    }
-    
-    state.lastMessageTimestamp = timestamp;
-  }
-
-  private updateDomainInference(state: SourceInferenceState, payload: unknown): void {
-    // TODO: Implement Domain profiling
-    // - Extract numeric fields and track min/max/mean/stddev
-    // - Extract categorical fields and track observed values
-    // - Handle nullability rates
-  }
-
-  private shouldEstablishOT(state: SourceInferenceState): boolean {
-    // TODO: Implement establishment criteria from DEFAULT_ALIGN_CONFIG
-    // - minSampleSize (default: 30 messages)
-    // - minObservationWindowMs (default: 60 seconds)
-    
-    const hasEnoughMessages = state.messageCount >= 30;
-    const firstSeenMs = new Date(state.firstSeenAt).getTime();
-    const now = Date.now();
-    const observationWindowMs = now - firstSeenMs;
-    const hasEnoughTime = observationWindowMs >= 60_000;
-    
-    return hasEnoughMessages && hasEnoughTime;
-  }
-}
-
-/**
- * Internal state tracked per source during OT inference.
- */
 interface SourceInferenceState {
   tenantId: string;
   connectionId: string;
@@ -165,33 +40,196 @@ interface SourceInferenceState {
   messageCount: number;
   established: boolean;
   establishedAt?: string;
-  
-  // Shape inference state
-  observedFields: Map<string, FieldInferenceState>;
-  
-  // Cadence inference state
-  interArrivalTimes: number[];
+
+  shapeAggregator: ShapeAggregator;
+  cadenceAccumulator: CadenceAccumulator;
+  domainProfiler: DomainProfiler;
   lastMessageTimestamp: string | null;
-  
-  // Domain inference state
-  numericFields: Map<string, NumericFieldState>;
-  categoricalFields: Map<string, CategoricalFieldState>;
+
+  dbSourceId?: string;
+  dbObservedTruthId?: string;
+  observedTruth?: ObservedTruth;
 }
 
-interface FieldInferenceState {
-  path: string;
-  observedType: string;
-  presenceCount: number;
-}
+// ---------------------------------------------------------------------------
+// Engine
+// ---------------------------------------------------------------------------
 
-interface NumericFieldState {
-  path: string;
-  values: number[];
-  min: number;
-  max: number;
-}
+export class ObservedTruthEngine {
+  private readonly sourceStates = new Map<string, SourceInferenceState>();
 
-interface CategoricalFieldState {
-  path: string;
-  observedValues: Set<string>;
+  constructor(
+    private readonly supabase?: SupabaseClient,
+    private readonly wsServer?: AlignWebSocketServer,
+  ) {}
+
+  async ingest(msg: NormalizedMessage): Promise<OtUpdateResult> {
+    const key = `${msg.tenantId}:${msg.connectionId}:${msg.sourceId}`;
+
+    let state = this.sourceStates.get(key);
+    if (!state) {
+      state = {
+        tenantId: msg.tenantId,
+        connectionId: msg.connectionId,
+        sourceId: msg.sourceId,
+        protocol: msg.metadata.protocol,
+        firstSeenAt: msg.timestamp,
+        lastSeenAt: msg.timestamp,
+        messageCount: 0,
+        established: false,
+        shapeAggregator: new ShapeAggregator(),
+        cadenceAccumulator: new CadenceAccumulator(),
+        domainProfiler: new DomainProfiler(),
+        lastMessageTimestamp: null,
+      };
+      this.sourceStates.set(key, state);
+      await this.upsertSource(state);
+    }
+
+    // Update accumulators
+    state.shapeAggregator.addSample(msg.payload);
+
+    if (state.lastMessageTimestamp) {
+      const intervalMs =
+        new Date(msg.timestamp).getTime() -
+        new Date(state.lastMessageTimestamp).getTime();
+      if (intervalMs > 0) state.cadenceAccumulator.addInterval(intervalMs);
+    }
+    state.lastMessageTimestamp = msg.timestamp;
+
+    state.domainProfiler.addSample(msg.payload);
+    state.messageCount++;
+    state.lastSeenAt = msg.timestamp;
+
+    // Throttled DB update for message count
+    if (this.supabase && state.dbSourceId && state.messageCount % 10 === 0) {
+      await this.supabase
+        .from('sources')
+        .update({ message_count: state.messageCount, last_message_at: msg.timestamp })
+        .eq('id', state.dbSourceId);
+    }
+
+    // Establishment check
+    if (!state.established && this.meetsEstablishmentCriteria(state)) {
+      state.established = true;
+      state.establishedAt = new Date().toISOString();
+      const ot = this.buildOT(state, msg.sourceId, msg.connectionId);
+      state.observedTruth = ot;
+      await this.persistOT(state, ot);
+      this.broadcastEstablished(state);
+      console.log(`[OT Engine] Established for: ${msg.sourceId}`);
+    }
+
+    // Refresh OT every 50 msgs after establishment
+    if (state.established && state.messageCount % 50 === 0) {
+      state.observedTruth = this.buildOT(state, msg.sourceId, msg.connectionId);
+    }
+
+    return {
+      sourceId: msg.sourceId,
+      established: state.established,
+      observedTruth: state.observedTruth,
+      dbObservedTruthId: state.dbObservedTruthId,
+      dbSourceId: state.dbSourceId,
+    };
+  }
+
+  private meetsEstablishmentCriteria(state: SourceInferenceState): boolean {
+    const { minSampleSize, minObservationWindowMs } = DEFAULT_ALIGN_CONFIG.inference;
+    if (state.messageCount < minSampleSize) return false;
+    const windowMs = Date.now() - new Date(state.firstSeenAt).getTime();
+    return windowMs >= minObservationWindowMs;
+  }
+
+  private buildOT(state: SourceInferenceState, sourceId: string, sessionId: string): ObservedTruth {
+    return {
+      id: state.dbObservedTruthId ?? crypto.randomUUID(),
+      topicId: sourceId,
+      sessionId,
+      establishedAt: state.establishedAt ?? new Date().toISOString(),
+      shape: state.shapeAggregator.buildShape(state.messageCount),
+      cadence: state.cadenceAccumulator.buildCadence(),
+      domain: state.domainProfiler.buildDomain(),
+      establishmentSampleSize: state.messageCount,
+    };
+  }
+
+  private async upsertSource(state: SourceInferenceState): Promise<void> {
+    if (!this.supabase) return;
+    try {
+      const hash = await this.sha256(state.sourceId);
+      const { data, error } = await this.supabase
+        .from('sources')
+        .upsert(
+          {
+            tenant_id: state.tenantId,
+            connection_id: state.connectionId,
+            session_id: state.connectionId,
+            protocol: state.protocol,
+            source_identifier_hash: hash,
+            source_identifier: state.sourceId,
+            status: 'discovering',
+            first_seen_at: state.firstSeenAt,
+            last_message_at: state.lastSeenAt,
+            message_count: 0,
+          },
+          { onConflict: 'tenant_id,session_id,source_identifier_hash', ignoreDuplicates: false },
+        )
+        .select('id')
+        .single();
+      if (!error && data) state.dbSourceId = data.id as string;
+    } catch (err) {
+      console.error('[OT Engine] upsertSource:', err);
+    }
+  }
+
+  private async persistOT(state: SourceInferenceState, ot: ObservedTruth): Promise<void> {
+    if (!this.supabase) return;
+    try {
+      const { data, error } = await this.supabase
+        .from('observed_truths')
+        .insert({
+          tenant_id: state.tenantId,
+          source_id: state.dbSourceId,
+          shape: ot.shape,
+          cadence: ot.cadence,
+          domain: ot.domain,
+          sample_size: ot.establishmentSampleSize,
+          established_at: ot.establishedAt,
+          last_updated_at: ot.establishedAt,
+        })
+        .select('id')
+        .single();
+
+      if (!error && data) {
+        state.dbObservedTruthId = data.id as string;
+        state.observedTruth = { ...ot, id: data.id as string };
+      }
+
+      if (state.dbSourceId) {
+        await this.supabase
+          .from('sources')
+          .update({ observed_truth_id: state.dbObservedTruthId, status: 'established' })
+          .eq('id', state.dbSourceId);
+      }
+    } catch (err) {
+      console.error('[OT Engine] persistOT:', err);
+    }
+  }
+
+  private broadcastEstablished(state: SourceInferenceState): void {
+    this.wsServer?.broadcastToSession(state.connectionId, {
+      type: 'topic:status-changed',
+      sessionId: state.connectionId,
+      topicId: state.sourceId,
+      status: 'established',
+    });
+  }
+
+  private async sha256(input: string): Promise<string> {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+    return Array.from(new Uint8Array(buf))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
 }

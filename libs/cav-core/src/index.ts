@@ -141,6 +141,17 @@ export type {
   PaginatedResponse,
 } from './lib/api';
 
+// Expected Divergence (v1.1 feature)
+export type {
+  ExpectedDivergenceStatus,
+  ExpectedDivergence,
+  ExpectedDivergenceSummary,
+  CreateExpectedDivergenceRequest,
+  ExpectedDivergenceMatch,
+  DivergenceEventLabel,
+  AnnotatedDivergenceEvent,
+} from './lib/expected-divergence';
+
 // OT configuration (protocol-agnostic - no changes needed)
 export type {
   OtInferenceConfig,

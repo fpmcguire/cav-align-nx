@@ -51,12 +51,19 @@ export type AppIconName =
   | 'magnifying-glass'
   | 'arrow-right-from-bracket'
   // Align-specific
-  | 'bolt'           // Divergence confirmed
-  | 'bolt-slash'     // Divergence resolved
-  | 'eye'            // Observing
-  | 'circle-dot'     // Discovering
-  | 'layer-group'    // Sessions
-  | 'server';        // Broker
+  | 'bolt'                 // Divergence confirmed
+  | 'bolt-slash'           // Divergence resolved
+  | 'eye'                  // Observing
+  | 'circle-dot'           // Discovering
+  | 'layer-group'          // Sessions
+  | 'server'               // Broker
+  | 'calendar-check'       // Expected divergence confirmed
+  | 'calendar-xmark'       // Expected divergence missed
+  | 'calendar-plus'        // Create expected divergence
+  | 'calendar-days'        // Expected divergence list
+  | 'filter'               // Filter
+  | 'check'                // Generic check
+  | 'ban';                 // Cancel
 
 @Component({
   selector: 'app-icon',

@@ -1,13 +1,7 @@
 /**
  * app.ts
  *
- * Express application setup for the CAV-Align backend.
- * Initializes:
- *   - Express middleware
- *   - Supabase client
- *   - Module registry
- *   - WebSocket server
- *   - API routes
+ * Express application setup for the CAV-Align backend (v1.1.0).
  */
 
 import express, { Express } from 'express';
@@ -18,37 +12,45 @@ import { setupApiRoutes } from './api/routes';
 import { ModuleRegistry } from './modules/module-registry';
 import { initializeModules } from './modules/initialize-modules';
 import { IngestionOrchestrator } from './ingestion/ingestion-orchestrator';
+import { getSupabaseClient } from './lib/supabase-client';
+import { ExpectedDivergenceMatcher } from './engines/expected-divergence/matcher';
 
 export async function startServer(port: number | string): Promise<HttpServer> {
   const app: Express = express();
   const httpServer = createServer(app);
 
-  // Middleware
   app.use(cors());
   app.use(express.json());
 
-  // Health check
   app.get('/health', (req, res) => {
-    res.json({ status: 'ok', service: 'align-api', version: '1.0.0' });
+    res.json({ status: 'ok', service: 'align-api', version: '1.1.0' });
   });
 
-  // Initialize core services
+  // Core services
+  const supabase = getSupabaseClient();
   const moduleRegistry = new ModuleRegistry();
-  initializeModules(moduleRegistry); // Register MQTT and other protocol adapters
-  
-  const ingestionOrchestrator = new IngestionOrchestrator(moduleRegistry);
+  initializeModules(moduleRegistry);
 
-  // Setup WebSocket server for real-time updates
+  // WebSocket server must be created before IngestionOrchestrator
   const wsServer = setupWebSocketServer(httpServer);
 
-  // Setup REST API routes
+  const ingestionOrchestrator = new IngestionOrchestrator(moduleRegistry, wsServer, supabase);
+
   setupApiRoutes(app, { moduleRegistry, ingestionOrchestrator, wsServer });
 
-  // Start listening
+  // Start expiration checker (every 60 seconds)
+  if (supabase) {
+    const matcher = new ExpectedDivergenceMatcher(supabase);
+    setInterval(() => {
+      matcher.checkExpiredWindows().catch((err) =>
+        console.error('[ExpirationChecker] error:', err),
+      );
+    }, 60_000);
+    console.log('[app] Expected Divergence expiration checker started');
+  }
+
   await new Promise<void>((resolve) => {
-    httpServer.listen(port, () => {
-      resolve();
-    });
+    httpServer.listen(port, () => resolve());
   });
 
   return httpServer;

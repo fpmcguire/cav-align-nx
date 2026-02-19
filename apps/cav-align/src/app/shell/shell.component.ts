@@ -50,6 +50,12 @@ import { AppIconComponent } from '@cav-align/ui';
             </a>
           </li>
           <li>
+            <a routerLink="/app/expected-divergences" routerLinkActive="active" class="nav-item">
+              <app-icon name="calendar-days" />
+              @if (!sidebarCollapsed()) { <span>Expected</span> }
+            </a>
+          </li>
+          <li>
             <a routerLink="/app/connections" routerLinkActive="active" class="nav-item">
               <app-icon name="server" />
               @if (!sidebarCollapsed()) { <span>Connections</span> }
