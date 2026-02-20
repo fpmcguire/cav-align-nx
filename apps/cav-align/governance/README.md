@@ -4,25 +4,26 @@ This directory is a required repository artifact. It must be committed and kept 
 
 ## Contents
 
-| File | Purpose |
-|---|---|
-| `Governance_Matrix.xlsx` | Tracks every product release against CAV Level, RPD version, and hardening status |
-| `README.md` | This file |
+| File                                        | Purpose                                                                           |
+| ------------------------------------------- | --------------------------------------------------------------------------------- |
+| `Governance_Matrix.xlsx`                    | Tracks every product release against CAV Level, RPD version, and hardening status |
+| 'CAV_Levels_Roadmap_Consolidated_v1.1.docx' | The current CAV Levels roadmap, as defined by the CAV Standards team              |
+| `README.md`                                 | This file                                                                         |
 
 ## Governance Matrix — Sheet: Governance Matrix
 
 One row per product release. **A new row must be added before any version bump is merged.**
 
-| Column | Description |
-|---|---|
-| Release Date | YYYY-MM |
-| Product Version | e.g. `MQTT Align v1.1.0` |
-| CAV Level | e.g. `CAV Level 1.1` — never advance without formal review |
-| CAV Standard Version | `CAV v1.0` — do not increment without explicit authorisation |
-| RPD Version | e.g. `RPD v1.1 (With Addendum)` |
-| Alignment Pack Version | e.g. `Alignment Pack v1.1` |
-| Hardening Status | Session A / Session B / Complete |
-| Notes | Summary of what changed |
+| Column                 | Description                                                  |
+| ---------------------- | ------------------------------------------------------------ |
+| Release Date           | YYYY-MM                                                      |
+| Product Version        | e.g. `MQTT Align v1.1.0`                                     |
+| CAV Level              | e.g. `CAV Level 1.1` — never advance without formal review   |
+| CAV Standard Version   | `CAV v1.0` — do not increment without explicit authorisation |
+| RPD Version            | e.g. `RPD v1.1 (With Addendum)`                              |
+| Alignment Pack Version | e.g. `Alignment Pack v1.1`                                   |
+| Hardening Status       | Session A / Session B / Complete                             |
+| Notes                  | Summary of what changed                                      |
 
 ## Governance Matrix — Sheet: Release Checklist
 

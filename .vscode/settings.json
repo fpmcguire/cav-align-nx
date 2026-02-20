@@ -5,6 +5,7 @@
     "app",
     "lint",
     "mqtt-align-vscode",
-    "cav-align app"
+    "cav-align app",
+    "align-api"
   ]
 }
