@@ -12,6 +12,7 @@ This directory is a required repository artifact. It must be committed and kept 
 | `Cavalieri_Align_MQTT_Align_Level1_SignOff_Declaration.docx`   | The formal sign-off declaration for achieving CAV Level 1, to be signed by all relevant stakeholders      |
 | `Cavalieri_Align_Operations_Runbook_v1.1.docx`                 | The operations runbook, detailing operational procedures and best practices                               |
 | `Cavalieri_Align_Privacy_and_Data_Handling_Standard_v1.1.docx` | The privacy and data handling standard, defining requirements for data protection and compliance          |
+| `Cavalieri_Align_Security_Baseline_Standard_v1.docx`           | The security baseline standard, defining the minimum security requirements for the product                |
 | `README.md`                                                    | This file                                                                                                 |
 
 ## Governance Matrix — Sheet: Governance Matrix
