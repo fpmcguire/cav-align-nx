@@ -3,17 +3,25 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "apps/align-api/src",
   "projectType": "application",
-  "tags": ["type:backend"],
+  "tags": [
+    "type:backend"
+  ],
   "targets": {
     "build": {
       "executor": "@nx/esbuild:esbuild",
-      "outputs": ["{options.outputPath}"],
+      "outputs": [
+        "{options.outputPath}"
+      ],
       "options": {
         "outputPath": "dist/apps/align-api",
         "main": "apps/align-api/src/main.ts",
         "tsConfig": "apps/align-api/tsconfig.app.json",
-        "assets": ["apps/align-api/src/assets"],
-        "format": ["cjs"],
+        "assets": [
+          "apps/align-api/src/assets"
+        ],
+        "format": [
+          "cjs"
+        ],
         "bundle": true,
         "thirdParty": true,
         "platform": "node",
@@ -37,14 +45,26 @@
     "serve": {
       "executor": "@nx/js:node",
       "defaultConfiguration": "development",
-      "dependsOn": ["build"],
+      "dependsOn": [
+        "build"
+      ],
       "options": {
         "buildTarget": "align-api:build",
-        "watch": true
+        "watch": true,
+        "envFile": "apps/align-api/environments/.env.development"
       },
       "configurations": {
+        "development": {
+          "buildTarget": "align-api:build",
+          "envFile": "apps/align-api/environments/.env.development"
+        },
+        "staging": {
+          "buildTarget": "align-api:build",
+          "envFile": "apps/align-api/environments/.env.staging"
+        },
         "production": {
-          "buildTarget": "align-api:build:production"
+          "buildTarget": "align-api:build:production",
+          "envFile": "apps/align-api/environments/.env.production"
         }
       }
     },
