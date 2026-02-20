@@ -8,7 +8,7 @@
     "build": "npx nx build align-api --configuration=production",
     "build:cav-align":"npx nx build cav-align --configuration=development",
     "build:align-api": "npx nx build align-api --configuration=production",
-    "lint:all": "npx nx run-many --target=lint --all",
+    "lint:all": "npx nx run-many --target=lint --all"
   },
   "private": true,
   "dependencies": {
