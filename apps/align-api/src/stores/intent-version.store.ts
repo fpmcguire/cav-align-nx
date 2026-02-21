@@ -41,10 +41,10 @@ export class IntentVersionStore {
   // ── Create (as draft) ────────────────────────────────────────────────────
 
   async create(
-    tenantId: string,
+    tenantId:   string,
     artifactId: string,
-    createdBy: string,
-    input: CreateIntentVersionRequest
+    createdBy:  string,
+    input:      CreateIntentVersionRequest,
   ): Promise<IntentVersion | 'invalid-schema' | undefined> {
     try {
       if (!isSupportedSchemaVersion(input.definition)) {
@@ -71,14 +71,14 @@ export class IntentVersionStore {
       const { data, error } = await this.supabase
         .from('intent_versions')
         .insert({
-          artifact_id: artifactId,
-          tenant_id: tenantId,
+          artifact_id:    artifactId,
+          tenant_id:      tenantId,
           version_number: nextVersion,
-          definition: input.definition,
-          status: 'draft' as IntentVersionStatus,
+          definition:     input.definition,
+          status:         'draft' as IntentVersionStatus,
           effective_from: input.effectiveFrom,
           effective_until: null,
-          created_by: createdBy,
+          created_by:     createdBy,
         })
         .select()
         .single();
@@ -89,9 +89,7 @@ export class IntentVersionStore {
       }
 
       this.log.info('Intent version created (draft)', {
-        tenantId,
-        artifactId,
-        versionNumber: nextVersion,
+        tenantId, artifactId, versionNumber: nextVersion,
       });
       return rowToVersion(data);
     } catch (err) {
@@ -103,9 +101,9 @@ export class IntentVersionStore {
   // ── Activate (atomic supersede) ──────────────────────────────────────────
 
   async activate(
-    tenantId: string,
+    tenantId:   string,
     artifactId: string,
-    versionId: string
+    versionId:  string,
   ): Promise<IntentVersion | 'not-found' | 'already-active' | 'missing-effective-from' | null> {
     try {
       // Fetch the version to activate
@@ -150,18 +148,15 @@ export class IntentVersionStore {
       await this.supabase
         .from('intent_artifacts')
         .update({
-          current_version: activated.version_number,
+          current_version:  activated.version_number,
           active_version_id: versionId,
-          updated_at: now,
+          updated_at:       now,
         })
         .eq('id', artifactId)
         .eq('tenant_id', tenantId);
 
       this.log.info('Intent version activated', {
-        tenantId,
-        artifactId,
-        versionId,
-        versionNumber: activated.version_number,
+        tenantId, artifactId, versionId, versionNumber: activated.version_number,
       });
       return rowToVersion(activated);
     } catch (err) {
@@ -185,19 +180,17 @@ export class IntentVersionStore {
    * let the engine filter by topic path.
    */
   async getActiveForDimension(
-    tenantId: string,
+    tenantId:  string,
     dimension: DivergenceDimension,
-    at: string
+    at:        string,
   ): Promise<IntentVersion[]> {
     try {
       const { data, error } = await this.supabase
         .from('intent_versions')
-        .select(
-          `
+        .select(`
           *,
           intent_artifacts!inner(topic_scope, precedence)
-        `
-        )
+        `)
         .eq('tenant_id', tenantId)
         .eq('status', 'active')
         .lte('effective_from', at);
@@ -216,9 +209,9 @@ export class IntentVersionStore {
 
           // Dimension check via definition shape
           const def = row['definition'] as Record<string, unknown>;
-          if (dimension === 'shape' && !('requiredFields' in def)) return false;
-          if (dimension === 'cadence' && !('expectedMeanIntervalMs' in def)) return false;
-          if (dimension === 'domain' && !('numericConstraints' in def)) return false;
+          if (dimension === 'shape'   && !('requiredFields' in def))          return false;
+          if (dimension === 'cadence' && !('expectedMeanIntervalMs' in def))  return false;
+          if (dimension === 'domain'  && !('numericConstraints' in def))      return false;
 
           return true;
         })
@@ -281,16 +274,16 @@ function isSupportedSchemaVersion(def: IntentDefinition): boolean {
 
 function rowToVersion(row: Record<string, unknown>): IntentVersion {
   return {
-    id: row['id'] as string,
-    artifactId: row['artifact_id'] as string,
-    tenantId: row['tenant_id'] as string,
-    versionNumber: row['version_number'] as number,
-    definition: row['definition'] as IntentDefinition,
-    status: row['status'] as IntentVersionStatus,
-    effectiveFrom: row['effective_from'] as string,
+    id:             row['id'] as string,
+    artifactId:     row['artifact_id'] as string,
+    tenantId:       row['tenant_id'] as string,
+    versionNumber:  row['version_number'] as number,
+    definition:     row['definition'] as IntentDefinition,
+    status:         row['status'] as IntentVersionStatus,
+    effectiveFrom:  row['effective_from'] as string,
     effectiveUntil: (row['effective_until'] as string) ?? null,
-    createdBy: row['created_by'] as string,
-    createdAt: row['created_at'] as string,
+    createdBy:      row['created_by'] as string,
+    createdAt:      row['created_at'] as string,
   };
 }
 
@@ -299,28 +292,26 @@ function rowToVersion(row: Record<string, unknown>): IntentVersion {
  * so the engine can access them without an extra query.
  */
 function rowToVersionWithArtifact(row: Record<string, unknown>): IntentVersion {
-  const base = rowToVersion(row);
+  const base    = rowToVersion(row);
   const artifact = row['intent_artifacts'] as Record<string, unknown> | undefined;
   return {
     ...base,
     // Attach denormalised fields for engine consumption
     // Cast via unknown — these are engine-internal, not part of the public type
-    ...(artifact
-      ? {
-          topicScope: artifact['topic_scope'] as string,
-          precedence: (artifact['precedence'] as number) ?? 0,
-        }
-      : {}),
+    ...(artifact ? {
+      topicScope: artifact['topic_scope'] as string,
+      precedence: (artifact['precedence'] as number) ?? 0,
+    } : {}),
   } as IntentVersion;
 }
 
 function rowToVersionSummary(row: Record<string, unknown>): IntentVersionSummary {
   return {
-    id: row['id'] as string,
-    versionNumber: row['version_number'] as number,
-    status: row['status'] as IntentVersionStatus,
-    effectiveFrom: row['effective_from'] as string,
+    id:             row['id'] as string,
+    versionNumber:  row['version_number'] as number,
+    status:         row['status'] as IntentVersionStatus,
+    effectiveFrom:  row['effective_from'] as string,
     effectiveUntil: (row['effective_until'] as string) ?? null,
-    createdAt: row['created_at'] as string,
+    createdAt:      row['created_at'] as string,
   };
 }

@@ -16,16 +16,24 @@
  */
 
 import type { NormalizedMessage, ProtocolConnection, TenantContext } from '@cav-align/core';
+import type { DivergenceDimension } from '@cav-align/core';
 import { hasModule } from '@cav-align/core';
 import type { AlignWebSocketServer } from '../websocket/websocket-server';
 import type { ModuleRegistry } from '../modules/module-registry';
 import { ObservedTruthEngine } from '../engines/observed-truth/observed-truth-engine';
 import { DivergenceEngine } from '../engines/divergence/divergence-engine';
 import { ExpectedDivergenceMatcher } from '../engines/expected-divergence/matcher';
+import { IntentProjectionEngine } from '../engines/intent/intent-projection-engine';
+import { DeltaEngine } from '../engines/delta/delta-engine';
+import { EnvelopeEvaluator } from '../engines/envelope/envelope-evaluator';
 import type { ObservedTruthStore } from '../stores/observed-truth.store';
 import type { DivergenceStore } from '../stores/divergence.store';
 import type { ExpectedDivergenceStore } from '../stores/expected-divergence.store';
 import type { SessionStore } from '../stores/session.store';
+import type { IntentVersionStore } from '../stores/intent-version.store';
+import type { DeltaStore } from '../stores/delta.store';
+import type { BreachStore } from '../stores/breach.store';
+import type { ConvergenceActionStore } from '../stores/convergence-action.store';
 import { rootLogger } from '../lib/logger';
 
 const log = rootLogger.child({ context: 'IngestionOrchestrator' });
@@ -49,6 +57,11 @@ export interface OrchestratorStores {
   divergence:         DivergenceStore;
   expectedDivergence: ExpectedDivergenceStore;
   session:            SessionStore;
+  // CAV Level 4 — v2 stores (optional — v2 branch is no-op when absent)
+  intentVersion?:     IntentVersionStore;
+  delta?:             DeltaStore;
+  breach?:            BreachStore;
+  convergenceAction?: ConvergenceActionStore;
 }
 
 export interface OrchestratorStats {
@@ -57,9 +70,15 @@ export interface OrchestratorStats {
 }
 
 export class IngestionOrchestrator {
+  // v1 engines (frozen)
   private readonly otEngine   = new ObservedTruthEngine();
   private readonly divEngine  = new DivergenceEngine();
   private readonly matcher    = new ExpectedDivergenceMatcher();
+  // v2 engines (pure — no state)
+  private readonly intentEngine   = new IntentProjectionEngine();
+  private readonly deltaEngine    = new DeltaEngine();
+  private readonly envelopeEngine = new EnvelopeEvaluator();
+
   private readonly activeSessions = new Set<string>();
   private lastMessageAt: string | null = null;
 
@@ -197,6 +216,9 @@ export class IngestionOrchestrator {
       // ── 5. Divergence detection (only after OT established) ──────────────
       if (!otResult.established || !otResult.observedTruth) return;
 
+      // ── v2 branch: Intent + Delta + Breach (parallel, non-blocking) ──────
+      void this.runV2Branch(msg, otResult.observedTruth, otResult.dbObservedTruthId);
+
       const divResults = this.divEngine.detect(msg, otResult.observedTruth);
 
       for (const result of divResults) {
@@ -294,6 +316,148 @@ export class IngestionOrchestrator {
       }
     } catch (err) {
       log.error('processMessage error', err, { tenantId: msg.tenantId, sourceId: msg.sourceId });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // v2 Pipeline Branch — Intent + Delta + Breach
+  // Runs in parallel to v1. A no-op if no v2 stores are configured or
+  // if no active intent version exists for the message topic + dimension.
+  // ---------------------------------------------------------------------------
+
+  private async runV2Branch(
+    msg:             NormalizedMessage,
+    observedTruth:   import('@cav-align/core').ObservedTruth,
+    dbObservedTruthId: string | undefined,
+  ): Promise<void> {
+    if (!this.stores?.intentVersion || !this.stores?.delta || !this.stores?.breach) return;
+    if (!dbObservedTruthId) return;
+
+    const dimensions: DivergenceDimension[] = ['shape', 'cadence', 'domain'];
+    const at = msg.timestamp;
+
+    for (const dimension of dimensions) {
+      try {
+        // 1. Fetch all active intent versions for this tenant + dimension
+        const versions = await this.stores.intentVersion.getActiveForDimension(
+          msg.tenantId, dimension, at,
+        );
+        if (versions.length === 0) continue;
+
+        // 2. Project i_k(t) — engine selects best matching version
+        const projected = this.intentEngine.project(versions, msg.sourceId, dimension, at);
+        if (!projected) continue;
+
+        // 3. Compute Delta_k(t) = D_k(i_k(t), s_k(t))
+        const deltaResult = this.deltaEngine.compute(projected, observedTruth, dimension);
+
+        // 4. Evaluate envelope
+        const assessment = this.envelopeEngine.evaluate(deltaResult, projected.definition);
+
+        // Override withinEnvelope from assessment (engine computes value; evaluator judges threshold)
+        const withinEnvelope = !assessment.breached;
+
+        // 5. Persist delta
+        const deltaId = await this.stores.delta.persist({
+          tenantId:        msg.tenantId,
+          intentVersionId: projected.intentVersionId,
+          observedTruthId: dbObservedTruthId,
+          topicScope:      projected.topicScope,
+          dimension,
+          deltaValue:      deltaResult.value,
+          deltaDetail:     deltaResult.detail,
+          withinEnvelope,
+          computedAt:      at,
+        });
+
+        if (!deltaId) continue;
+
+        // 6. Breach management
+        const activeBreach = await this.stores.breach.getActiveBreach(
+          msg.tenantId, projected.topicScope, dimension, projected.intentVersionId,
+        );
+
+        if (!withinEnvelope && !activeBreach) {
+          // Open new breach
+          const breachId = await this.stores.breach.open({
+            tenantId:        msg.tenantId,
+            intentVersionId: projected.intentVersionId,
+            firstDeltaId:    deltaId,
+            topicScope:      projected.topicScope,
+            dimension,
+            evidence:        assessment.evidence,
+            breachedAt:      at,
+          });
+
+          if (breachId) {
+            this.wsServer?.broadcastToTenant(msg.tenantId, {
+              type:            'breach:detected',
+              tenantId:        msg.tenantId,
+              breachId,
+              intentVersionId: projected.intentVersionId,
+              topicScope:      projected.topicScope,
+              dimension,
+              severity:        assessment.severity,
+              deltaValue:      deltaResult.value,
+              reason:          deltaResult.detail.reason,
+              breachedAt:      at,
+            });
+
+            log.info('Envelope breach opened', {
+              tenantId:  msg.tenantId,
+              topicScope: projected.topicScope,
+              dimension,
+              breachId,
+              severity:  assessment.severity,
+            });
+          }
+        } else if (withinEnvelope && activeBreach) {
+          // Resolve existing breach
+          await this.stores.breach.resolve(msg.tenantId, activeBreach.id, at);
+
+          this.wsServer?.broadcastToTenant(msg.tenantId, {
+            type:            'breach:resolved',
+            tenantId:        msg.tenantId,
+            breachId:        activeBreach.id,
+            topicScope:      projected.topicScope,
+            dimension,
+            resolvedAt:      at,
+            finalDeltaValue: deltaResult.value,
+          });
+
+          log.info('Envelope breach resolved', {
+            tenantId:  msg.tenantId,
+            breachId:  activeBreach.id,
+            dimension,
+          });
+
+          // Retrospectively link post-action delta if there are pending actions
+          if (this.stores.convergenceAction) {
+            const actions = await this.stores.convergenceAction.listForBreach(
+              msg.tenantId, activeBreach.id,
+            );
+            for (const action of actions.filter((a) => !a.postActionDeltaId)) {
+              if (new Date(action.actionTakenAt).getTime() < new Date(at).getTime()) {
+                const preBreach  = activeBreach.evidence.deltaValue;
+                const postDelta  = deltaResult.value;
+                const effectiveness =
+                  postDelta < preBreach * 0.95 ? 'converging' :
+                  postDelta > preBreach * 1.05 ? 'diverging'  : 'stable';
+
+                await this.stores.convergenceAction.linkPostActionDelta(
+                  msg.tenantId, action.id, deltaId, effectiveness,
+                );
+              }
+            }
+          }
+        }
+      } catch (err) {
+        log.error('v2 branch error', err, {
+          tenantId:  msg.tenantId,
+          sourceId:  msg.sourceId,
+          dimension,
+        });
+      }
     }
   }
 }

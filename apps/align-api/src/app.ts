@@ -33,13 +33,17 @@ import { ExpectedDivergenceStore } from './stores/expected-divergence.store';
 import { SessionStore } from './stores/session.store';
 import { ConnectionStore } from './stores/connection.store';
 import { TenantStore } from './stores/tenant.store';
+import { IntentVersionStore } from './stores/intent-version.store';
+import { DeltaStore } from './stores/delta.store';
+import { BreachStore } from './stores/breach.store';
+import { ConvergenceActionStore } from './stores/convergence-action.store';
 import { isEncryptionConfigured } from './lib/crypto';
 
 const log = rootLogger.child({ context: 'app' });
 
 export async function startServer(port: number | string): Promise<HttpServer> {
   const app: Express = express();
-  const httpServer = createServer(app);
+  const httpServer   = createServer(app);
 
   app.use(cors());
   app.use(express.json());
@@ -47,7 +51,7 @@ export async function startServer(port: number | string): Promise<HttpServer> {
   // Attach requestId + base logger to every request
   app.use((req, _res, next) => {
     req.requestId = randomUUID();
-    req.log = rootLogger.child({ requestId: req.requestId });
+    req.log       = rootLogger.child({ requestId: req.requestId });
     next();
   });
 
@@ -65,14 +69,17 @@ export async function startServer(port: number | string): Promise<HttpServer> {
   }
 
   // ── 2. Store layer ──────────────────────────────────────────────────────
-  const stores = supabase
-    ? {
-        observedTruth: new ObservedTruthStore(supabase),
-        divergence: new DivergenceStore(supabase),
-        expectedDivergence: new ExpectedDivergenceStore(supabase),
-        session: new SessionStore(supabase),
-      }
-    : undefined;
+  const stores = supabase ? {
+    observedTruth:      new ObservedTruthStore(supabase),
+    divergence:         new DivergenceStore(supabase),
+    expectedDivergence: new ExpectedDivergenceStore(supabase),
+    session:            new SessionStore(supabase),
+    // v2 stores — optional; v2 pipeline branch is no-op when absent
+    intentVersion:      new IntentVersionStore(supabase),
+    delta:              new DeltaStore(supabase),
+    breach:             new BreachStore(supabase),
+    convergenceAction:  new ConvergenceActionStore(supabase),
+  } : undefined;
 
   // ── 3. WebSocket server ─────────────────────────────────────────────────
   const wsServer = setupWebSocketServer(httpServer);
@@ -90,29 +97,29 @@ export async function startServer(port: number | string): Promise<HttpServer> {
 
   // ── 7. Health endpoint (full subsystem detail) ──────────────────────────
   app.get('/health', (_req, res) => {
-    const wsStats = wsServer.getStats();
+    const wsStats  = wsServer.getStats();
     const orchStats = ingestionOrchestrator.getStats();
 
     res.json({
-      status: 'ok',
-      service: 'align-api',
-      version: '2.0.0',
-      timestamp: new Date().toISOString(),
+      status:           'ok',
+      service:          'align-api',
+      version:          '2.0.0',
+      timestamp:        new Date().toISOString(),
       subsystems: {
         supabase: {
-          configured: !!supabase,
+          configured:   !!supabase,
         },
         encryption: {
-          configured: isEncryptionConfigured(),
+          configured:   isEncryptionConfigured(),
         },
         websocket: {
           connectedClients: wsStats.connectedClients,
-          activeTenants: wsStats.tenants,
+          activeTenants:    wsStats.tenants,
         },
         ingestion: {
-          activeSessions: orchStats.activeSessions,
-          lastMessageAt: orchStats.lastMessageAt,
-          protocols: moduleRegistry.getRegisteredProtocols(),
+          activeSessions:  orchStats.activeSessions,
+          lastMessageAt:   orchStats.lastMessageAt,
+          protocols:       moduleRegistry.getRegisteredProtocols(),
         },
       },
     });
