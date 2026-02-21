@@ -4,16 +4,20 @@ This directory is a required repository artifact. It must be committed and kept 
 
 ## Contents
 
-| File                                                           | Purpose                                                                                                   |
-| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `Governance_Matrix.xlsx`                                       | Tracks every product release against CAV Level, RPD version, and hardening status                         |
-| `CAV_Levels_Roadmap_Consolidated_v1.1.docx`                    | The current CAV Levels roadmap, as defined by the CAV Standards team                                      |
-| `Cavalieri_Align_MQTT_Align_Canonical_Positioning_v1.docx`     | The canonical positioning document, defining the product's intended market position and CAV Level targets |
-| `Cavalieri_Align_MQTT_Align_Level1_SignOff_Declaration.docx`   | The formal sign-off declaration for achieving CAV Level 1, to be signed by all relevant stakeholders      |
-| `Cavalieri_Align_Operations_Runbook_v1.1.docx`                 | The operations runbook, detailing operational procedures and best practices                               |
-| `Cavalieri_Align_Privacy_and_Data_Handling_Standard_v1.1.docx` | The privacy and data handling standard, defining requirements for data protection and compliance          |
-| `Cavalieri_Align_Security_Baseline_Standard_v1.docx`           | The security baseline standard, defining the minimum security requirements for the product                |
-| `README.md`                                                    | This file                                                                                                 |
+| File                                                                 | Purpose                                                                                                    |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `Governance_Matrix.xlsx`                                             | Tracks every product release against CAV Level, RPD version, and hardening status                          |
+| `CAV_Levels_Roadmap_Consolidated_v1.1.docx`                          | The current CAV Levels roadmap, as defined by the CAV Standards team                                       |
+| `Cavalieri_Align_MQTT_Align_Canonical_Positioning_v1.docx`           | The canonical positioning document, defining the product's intended market position and CAV Level targets  |
+| `Cavalieri_Align_MQTT_Align_Level1_SignOff_Declaration.docx`         | The formal sign-off declaration for achieving CAV Level 1, to be signed by all relevant stakeholders       |
+| `Cavalieri_Align_Operations_Runbook_v1.1.docx`                       | The operations runbook, detailing operational procedures and best practices                                |
+| `Cavalieri_Align_Privacy_and_Data_Handling_Standard_v1.1.docx`       | The privacy and data handling standard, defining requirements for data protection and compliance           |
+| `Cavalieri_Align_Security_Baseline_Standard_v1.docx`                 | The security baseline standard, defining the minimum security requirements for the product                 |
+| `Cavalieri_Align_v2_Architecture_Plan_SignOff_Declaration_v0.2.docx` | The architecture plan sign-off declaration, defining the approved architecture for the product             |
+| `Cavalieri_Align_v2_Implementation_SignOff_SIGNED.docx`              | The implementation sign-off declaration, defining the approved implementation for the product              |
+| `Cavalieri_Align_Web_Compliance_Standard_v1.docx`                    | The web compliance standard, defining the minimum web compliance requirements for the product              |
+| `Governance_Matrix_v1.2.docx`                                        | The governance matrix, tracking every product release against CAV Level, RPD version, and hardening status |
+| `README.md`                                                          | This file                                                                                                  |
 
 ## Governance Matrix — Sheet: Governance Matrix
 
