@@ -94,7 +94,7 @@ export async function startServer(port: number | string): Promise<HttpServer> {
     const orchStats = ingestionOrchestrator.getStats();
 
     res.json({
-      status: 'ok',2.0.0
+      status: 'ok',
       service: 'align-api',
       version: '2.0.0',
       timestamp: new Date().toISOString(),
