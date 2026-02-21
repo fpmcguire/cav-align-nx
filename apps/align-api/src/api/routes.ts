@@ -28,9 +28,9 @@ import { hasModule } from '@cav-align/core';
 import type { ProtocolType } from '@cav-align/core';
 
 export interface ApiDependencies {
-  moduleRegistry:        ModuleRegistry;
+  moduleRegistry: ModuleRegistry;
   ingestionOrchestrator: IngestionOrchestrator;
-  wsServer:              AlignWebSocketServer;
+  wsServer: AlignWebSocketServer;
 }
 
 // Auth + tenant rate limit applied together on every protected route group
@@ -41,18 +41,18 @@ export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
 
   // Service-role store instances — shared across requests (stateless)
   const supabase = getSupabaseClient();
-  const divStore = supabase ? new DivergenceStore(supabase)     : null;
-  const otStore  = supabase ? new ObservedTruthStore(supabase)  : null;
-  const connStore = supabase ? new ConnectionStore(supabase)    : null;
-  const edStore  = supabase ? new ExpectedDivergenceStore(supabase) : null;
+  const divStore = supabase ? new DivergenceStore(supabase) : null;
+  const otStore = supabase ? new ObservedTruthStore(supabase) : null;
+  const connStore = supabase ? new ConnectionStore(supabase) : null;
+  const edStore = supabase ? new ExpectedDivergenceStore(supabase) : null;
 
   // ── Public — no auth ─────────────────────────────────────────────────────
   app.get('/api', (_req, res) => {
     res.json({
-      service:             'align-api',
-      version:             '1.1.0',
+      service: 'align-api',
+      version: '2.0.0',
       registeredProtocols: moduleRegistry.getRegisteredProtocols(),
-      activeConnections:   moduleRegistry.getActiveConnectionIds().length,
+      activeConnections: moduleRegistry.getActiveConnectionIds().length,
     });
   });
 
@@ -67,7 +67,7 @@ export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
 
     try {
       const events = await divStore.listEvents(req.tenantContext.tenant.id, {
-        status:    req.query['status']    as string | undefined,
+        status: req.query['status'] as string | undefined,
         dimension: req.query['dimension'] as string | undefined,
       });
       return res.json({ events });
@@ -96,9 +96,9 @@ export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
 
     const { tenantContext } = req;
     const { name, protocol, config, credentials } = req.body as {
-      name:        string;
-      protocol:    ProtocolType;
-      config:      Record<string, unknown>;
+      name: string;
+      protocol: ProtocolType;
+      config: Record<string, unknown>;
       credentials: Record<string, unknown>;
     };
 
@@ -120,7 +120,7 @@ export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
 
     try {
       const connection = await connStore.create({
-        tenantId:  tenantContext.tenant.id,
+        tenantId: tenantContext.tenant.id,
         name,
         protocol,
         config,
@@ -131,7 +131,7 @@ export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
       if (!connection) return res.status(500).json({ error: 'Failed to create connection' });
 
       req.log.info('Connection created', {
-        tenantId:     tenantContext.tenant.id,
+        tenantId: tenantContext.tenant.id,
         connectionId: connection.id,
         protocol,
       });
@@ -157,7 +157,7 @@ export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
     if (!deleted) return res.status(404).json({ error: 'Connection not found' });
 
     req.log.info('Connection deleted', {
-      tenantId:     req.tenantContext.tenant.id,
+      tenantId: req.tenantContext.tenant.id,
       connectionId: req.params['id'],
     });
 
@@ -166,7 +166,7 @@ export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
 
   // ── Sessions (stub) ───────────────────────────────────────────────────────
   app.post('/api/sessions', (_, res) => res.status(501).json({ error: 'Not implemented' }));
-  app.get('/api/sessions',  (_, res) => res.status(501).json({ error: 'Not implemented' }));
+  app.get('/api/sessions', (_, res) => res.status(501).json({ error: 'Not implemented' }));
 
   console.log('[API] Routes registered (v1.1.0 — Session C hardened)');
 }

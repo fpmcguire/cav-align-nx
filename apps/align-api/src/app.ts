@@ -39,7 +39,7 @@ const log = rootLogger.child({ context: 'app' });
 
 export async function startServer(port: number | string): Promise<HttpServer> {
   const app: Express = express();
-  const httpServer   = createServer(app);
+  const httpServer = createServer(app);
 
   app.use(cors());
   app.use(express.json());
@@ -47,7 +47,7 @@ export async function startServer(port: number | string): Promise<HttpServer> {
   // Attach requestId + base logger to every request
   app.use((req, _res, next) => {
     req.requestId = randomUUID();
-    req.log       = rootLogger.child({ requestId: req.requestId });
+    req.log = rootLogger.child({ requestId: req.requestId });
     next();
   });
 
@@ -65,12 +65,14 @@ export async function startServer(port: number | string): Promise<HttpServer> {
   }
 
   // ── 2. Store layer ──────────────────────────────────────────────────────
-  const stores = supabase ? {
-    observedTruth:      new ObservedTruthStore(supabase),
-    divergence:         new DivergenceStore(supabase),
-    expectedDivergence: new ExpectedDivergenceStore(supabase),
-    session:            new SessionStore(supabase),
-  } : undefined;
+  const stores = supabase
+    ? {
+        observedTruth: new ObservedTruthStore(supabase),
+        divergence: new DivergenceStore(supabase),
+        expectedDivergence: new ExpectedDivergenceStore(supabase),
+        session: new SessionStore(supabase),
+      }
+    : undefined;
 
   // ── 3. WebSocket server ─────────────────────────────────────────────────
   const wsServer = setupWebSocketServer(httpServer);
@@ -88,29 +90,29 @@ export async function startServer(port: number | string): Promise<HttpServer> {
 
   // ── 7. Health endpoint (full subsystem detail) ──────────────────────────
   app.get('/health', (_req, res) => {
-    const wsStats  = wsServer.getStats();
+    const wsStats = wsServer.getStats();
     const orchStats = ingestionOrchestrator.getStats();
 
     res.json({
-      status:           'ok',
-      service:          'align-api',
-      version:          '1.1.0',
-      timestamp:        new Date().toISOString(),
+      status: 'ok',2.0.0
+      service: 'align-api',
+      version: '2.0.0',
+      timestamp: new Date().toISOString(),
       subsystems: {
         supabase: {
-          configured:   !!supabase,
+          configured: !!supabase,
         },
         encryption: {
-          configured:   isEncryptionConfigured(),
+          configured: isEncryptionConfigured(),
         },
         websocket: {
           connectedClients: wsStats.connectedClients,
-          activeTenants:    wsStats.tenants,
+          activeTenants: wsStats.tenants,
         },
         ingestion: {
-          activeSessions:  orchStats.activeSessions,
-          lastMessageAt:   orchStats.lastMessageAt,
-          protocols:       moduleRegistry.getRegisteredProtocols(),
+          activeSessions: orchStats.activeSessions,
+          lastMessageAt: orchStats.lastMessageAt,
+          protocols: moduleRegistry.getRegisteredProtocols(),
         },
       },
     });
