@@ -1,8 +1,7 @@
 [build]
-builder = "nixpacks"
-buildCommand = "npm install && npx nx build align-api --configuration=production"
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "node dist/apps/align-api/main.js"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
