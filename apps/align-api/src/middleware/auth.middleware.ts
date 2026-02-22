@@ -20,6 +20,7 @@
  *   - tenants.name          (not organization_name)
  *   - module_subscriptions.module  (not module_name)
  *   - module_subscriptions.active: boolean  (not status: text)
+ * 
  */
 
 import type { Request, Response, NextFunction } from 'express';
