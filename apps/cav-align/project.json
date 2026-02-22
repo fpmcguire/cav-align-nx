@@ -15,7 +15,6 @@
         "outputPath": "dist/apps/cav-align",
         "browser": "apps/cav-align/src/main.ts",
         "tsConfig": "apps/cav-align/tsconfig.app.json",
-        "polyfills": ["zone.js"],
         "assets": [
           {
             "glob": "**/*",
