@@ -49,6 +49,8 @@ Thumbs.db
 **/.env.staging
 **/.env.production
 **/.env.development
+**/environment.ts
+**/environment.prod.ts
 !**/.env.example
 !**/.env*.example
 
