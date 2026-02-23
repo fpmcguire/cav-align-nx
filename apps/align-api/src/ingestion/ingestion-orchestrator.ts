@@ -80,6 +80,7 @@ export class IngestionOrchestrator {
   private readonly envelopeEngine = new EnvelopeEvaluator();
 
   private readonly activeSessions = new Set<string>();
+  private readonly sessionMap = new Map<string, string>(); // connectionId → sessionId
   private lastMessageAt: string | null = null;
 
   constructor(
@@ -113,13 +114,23 @@ export class IngestionOrchestrator {
     }
 
     // Record session start
-    await this.stores?.session.startSession({
+    const sessionId = await this.stores?.session.startSession({
       tenantId:     connection.tenantId ?? 'unknown',
       connectionId: connection.id,
       protocol:     connection.protocol,
       startedAt:    new Date().toISOString(),
     });
 
+    if (!sessionId) {
+      log.error('CRITICAL: Failed to create session — aborting connection startup', {
+        connectionId: connection.id,
+        protocol: connection.protocol,
+      });
+      throw new Error('Session creation failed');
+    }
+
+    // Store mapping for later use
+    this.sessionMap.set(connection.id, sessionId);
     this.activeSessions.add(connection.id);
 
     adapter.messages$.subscribe({
@@ -134,15 +145,25 @@ export class IngestionOrchestrator {
     this.activeSessions.delete(connectionId);
     await this.moduleRegistry.disconnectAdapter(connectionId);
 
+    // Retrieve sessionId from map
+    const sessionId = this.sessionMap.get(connectionId);
+    if (!sessionId) {
+      log.error('No session ID found for connection — cannot stop session', { connectionId });
+      return;
+    }
+
     await this.stores?.session.stopSession({
       tenantId,
-      connectionId,
+      sessionId,
       stoppedAt:    new Date().toISOString(),
       health:       'healthy',
       messageCount: 0,
     });
 
-    log.info('Ingestion stopped', { connectionId });
+    // Clean up mapping
+    this.sessionMap.delete(connectionId);
+
+    log.info('Ingestion stopped', { connectionId, sessionId });
   }
 
   // ---------------------------------------------------------------------------
@@ -203,12 +224,16 @@ export class IngestionOrchestrator {
           });
         }
 
-        this.wsServer?.broadcastToSession(msg.connectionId, {
-          type:      'topic:status-changed',
-          sessionId: msg.connectionId,
-          topicId:   msg.sourceId,
-          status:    'established',
-        });
+        // Broadcast using actual sessionId from DB
+        const sessionId = this.sessionMap.get(msg.connectionId);
+        if (sessionId) {
+          this.wsServer?.broadcastToSession(sessionId, {
+            type:      'topic:status-changed',
+            sessionId: sessionId,
+            topicId:   msg.sourceId,
+            status:    'established',
+          });
+        }
 
         log.info('OT established', { tenantId: msg.tenantId, sourceId: msg.sourceId });
       }
@@ -272,20 +297,24 @@ export class IngestionOrchestrator {
             }
           }
 
-          this.wsServer?.broadcastToSession(msg.connectionId, {
-            type:      'divergence:detected',
-            sessionId: msg.connectionId,
-            event: {
-              id:         result.dbEventId ?? crypto.randomUUID(),
-              topicPath:  msg.sourceId,
-              dimension:  result.dimension,
-              status:     'confirmed',
-              confirmedAt: result.newlyConfirmed?.confirmedAt,
-              changeKind: ('changeKind' in result.newlyConfirmed.evidence
-                ? result.newlyConfirmed.evidence.changeKind
-                : 'unknown') as string,
-            },
-          });
+          // Broadcast using actual sessionId from DB
+          const sessionId = this.sessionMap.get(msg.connectionId);
+          if (sessionId) {
+            this.wsServer?.broadcastToSession(sessionId, {
+              type:      'divergence:detected',
+              sessionId: sessionId,
+              event: {
+                id:         result.dbEventId ?? crypto.randomUUID(),
+                topicPath:  msg.sourceId,
+                dimension:  result.dimension,
+                status:     'confirmed',
+                confirmedAt: result.newlyConfirmed?.confirmedAt,
+                changeKind: ('changeKind' in result.newlyConfirmed.evidence
+                  ? result.newlyConfirmed.evidence.changeKind
+                  : 'unknown') as string,
+              },
+            });
+          }
 
           log.info('Divergence confirmed', {
             tenantId:  msg.tenantId,
@@ -302,11 +331,15 @@ export class IngestionOrchestrator {
             resolvedAt:  msg.timestamp,
           });
 
-          this.wsServer?.broadcastToSession(msg.connectionId, {
-            type:      'divergence:resolved',
-            sessionId: msg.connectionId,
-            eventId:   result.resolvedEventId,
-          });
+          // Broadcast using actual sessionId from DB
+          const sessionId = this.sessionMap.get(msg.connectionId);
+          if (sessionId) {
+            this.wsServer?.broadcastToSession(sessionId, {
+              type:      'divergence:resolved',
+              sessionId: sessionId,
+              eventId:   result.resolvedEventId,
+            });
+          }
 
           log.info('Divergence resolved', {
             tenantId: msg.tenantId,

@@ -81,6 +81,31 @@ export async function startServer(port: number | string): Promise<HttpServer> {
     convergenceAction:  new ConvergenceActionStore(supabase),
   } : undefined;
 
+  // ── 2.1. Startup recovery — mark orphaned active sessions as stopped ────
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('alignment_sessions')
+        .update({
+          status:     'stopped',
+          stopped_at: new Date().toISOString(),
+          health:     'stalled',
+        })
+        .eq('status', 'active')
+        .select();
+
+      if (error) {
+        log.error('Startup recovery failed', error);
+      } else if (data && data.length > 0) {
+        log.warn(`Startup recovery: marked ${data.length} orphaned session(s) as stopped`);
+      } else {
+        log.info('Startup recovery: no orphaned sessions found');
+      }
+    } catch (err) {
+      log.error('Startup recovery exception', err);
+    }
+  }
+
   // ── 3. WebSocket server ─────────────────────────────────────────────────
   const wsServer = setupWebSocketServer(httpServer);
 

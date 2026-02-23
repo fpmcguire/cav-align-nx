@@ -29,7 +29,7 @@ export interface SessionStartInput {
 
 export interface SessionStopInput {
   tenantId: string;
-  connectionId: string;
+  sessionId: string;
   stoppedAt: string;
   health: SessionHealth;
   messageCount: number;
@@ -44,18 +44,15 @@ export class SessionStore {
     try {
       const { data, error } = await this.supabase
         .from('alignment_sessions')
-        .upsert(
-          {
-            id:            input.connectionId,
-            tenant_id:     input.tenantId,
-            protocol:      input.protocol,
-            status:        'active',
-            started_at:    input.startedAt,
-            health:        'healthy',
-            message_count: 0,
-          },
-          { onConflict: 'id' },
-        )
+        .insert({
+          tenant_id:     input.tenantId,
+          connection_id: input.connectionId,
+          protocol:      input.protocol,
+          status:        'active',
+          started_at:    input.startedAt,
+          health:        'healthy',
+          message_count: 0,
+        })
         .select('id')
         .single();
 
@@ -87,7 +84,7 @@ export class SessionStore {
           health:        input.health,
           message_count: input.messageCount,
         })
-        .eq('id', input.connectionId)
+        .eq('id', input.sessionId)
         .eq('tenant_id', input.tenantId);
 
       if (error) {
@@ -96,9 +93,9 @@ export class SessionStore {
       }
 
       this.log.info('Session stopped', {
-        tenantId:     input.tenantId,
-        connectionId: input.connectionId,
-        health:       input.health,
+        tenantId:  input.tenantId,
+        sessionId: input.sessionId,
+        health:    input.health,
       });
     } catch (err) {
       this.log.error('stopSession exception', err);
@@ -107,7 +104,7 @@ export class SessionStore {
 
   async updateHealth(input: {
     tenantId: string;
-    connectionId: string;
+    sessionId: string;
     health: SessionHealth;
     messageCount: number;
   }): Promise<void> {
@@ -115,7 +112,7 @@ export class SessionStore {
       await this.supabase
         .from('alignment_sessions')
         .update({ health: input.health, message_count: input.messageCount })
-        .eq('id', input.connectionId)
+        .eq('id', input.sessionId)
         .eq('tenant_id', input.tenantId);
     } catch (err) {
       this.log.error('updateHealth exception', err);
