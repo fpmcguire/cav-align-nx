@@ -19,10 +19,12 @@ import type { AlignWebSocketServer } from '../websocket/websocket-server';
 import { tenantAuthMiddleware } from '../middleware/auth.middleware';
 import { tenantRateLimit } from '../middleware/rate-limit.middleware';
 import { createExpectedDivergenceRouter } from './expected-divergence.routes';
+import { createSessionsRouter } from './sessions.routes';
 import { DivergenceStore } from '../stores/divergence.store';
 import { ObservedTruthStore } from '../stores/observed-truth.store';
 import { ConnectionStore } from '../stores/connection.store';
 import { ExpectedDivergenceStore } from '../stores/expected-divergence.store';
+import { SessionStore } from '../stores/session.store';
 import { getSupabaseClient } from '../lib/supabase-client';
 import { hasModule } from '@cav-align/core';
 import type { ProtocolType } from '@cav-align/core';
@@ -65,6 +67,7 @@ export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
   const otStore = supabase ? new ObservedTruthStore(supabase) : null;
   const connStore = supabase ? new ConnectionStore(supabase) : null;
   const edStore = supabase ? new ExpectedDivergenceStore(supabase) : null;
+  const sessionStore = supabase ? new SessionStore(supabase) : null;
   // v2 stores
   const iaStore = supabase ? new IntentArtifactStore(supabase) : null;
   const ivStore = supabase ? new IntentVersionStore(supabase) : null;
@@ -188,9 +191,14 @@ export function setupApiRoutes(app: Express, deps: ApiDependencies): void {
     return res.status(204).send();
   });
 
-  // ── Sessions (stub) ───────────────────────────────────────────────────────
-  app.post('/api/sessions', (_, res) => res.status(501).json({ error: 'Not implemented' }));
-  app.get('/api/sessions', (_, res) => res.status(501).json({ error: 'Not implemented' }));
+  // ── Sessions (runtime monitoring) ────────────────────────────────────────
+  if (sessionStore) {
+    app.use('/api/sessions', ...protect, createSessionsRouter(sessionStore));
+  } else {
+    app.use('/api/sessions', (_req, res) =>
+      res.status(501).json({ error: 'Supabase not configured' })
+    );
+  }
 
   // ── Intent artifacts + versions (CAV Level 3) ───────────────────────────
   if (iaStore && ivStore) {

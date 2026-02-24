@@ -1,7 +1,20 @@
-import { Component, inject, signal, computed, OnInit } from '@angular/core';
+import { Component, inject, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ApiService } from '../../core/services/api.service';
-import type { IntentArtifactSummary } from '@cav-align/core';
+import { HttpClient } from '@angular/common/http';
+import { environment } from '../../../environments/environment';
+
+// Runtime session from alignment_sessions table
+interface RuntimeSession {
+  id: string;
+  tenant_id: string;
+  connection_id: string;
+  protocol: string;
+  status: 'starting' | 'active' | 'stopped' | 'error';
+  health: 'healthy' | 'degraded' | 'stalled';
+  message_count: number;
+  started_at: string;
+  stopped_at: string | null;
+}
 
 type LoadState = 'loading' | 'empty' | 'loaded' | 'error';
 
@@ -27,60 +40,63 @@ type LoadState = 'loading' | 'empty' | 'loaded' | 'error';
         @if (state() === 'loading') {
           <div class="state-center">
             <i class="fa-solid fa-circle-notch fa-spin state-icon muted"></i>
-            <p class="state-label">Loading intent artifacts…</p>
+            <p class="state-label">Loading sessions…</p>
           </div>
         }
 
         @if (state() === 'error') {
           <div class="state-center">
             <i class="fa-solid fa-triangle-exclamation state-icon warning"></i>
-            <p class="state-label">Failed to load intent artifacts. Is the API running?</p>
+            <p class="state-label">Failed to load sessions. Is the API running?</p>
           </div>
         }
 
         @if (state() === 'empty') {
           <div class="state-center">
-            <i class="fa-solid fa-layer-group state-icon muted"></i>
-            <p class="state-label">No intent artifacts found.</p>
-            <p class="state-sublabel">Create an intent artifact to start tracking alignment.</p>
+            <i class="fa-solid fa-network-wired state-icon muted"></i>
+            <p class="state-label">No sessions found.</p>
+            <p class="state-sublabel">Start a connection to begin monitoring.</p>
           </div>
         }
 
         @if (state() === 'loaded') {
-          <div class="filter-bar">
-            @for (dim of dimensions; track dim.value) {
-              <button
-                class="filter-btn"
-                [class.active]="activeDimension() === dim.value"
-                (click)="setDimension(dim.value)"
-              >
-                {{ dim.label }}
-              </button>
-            }
-          </div>
-
-          <div class="artifact-grid">
-            @for (artifact of filtered(); track artifact.id) {
-              <div class="artifact-card" [attr.data-status]="artifact.status">
-                <div class="artifact-header">
-                  <span class="artifact-name">{{ artifact.name }}</span>
-                  <span class="artifact-status" [attr.data-status]="artifact.status">
-                    {{ artifact.status }}
+          <div class="sessions-list">
+            @for (session of sessions(); track session.id) {
+              <div class="session-card" [attr.data-status]="session.status">
+                <div class="session-header">
+                  <div class="session-id">
+                    <i class="fa-solid fa-circle-dot"></i>
+                    {{ session.id.substring(0, 8) }}...
+                  </div>
+                  <span class="session-status" [attr.data-status]="session.status">
+                    {{ session.status }}
                   </span>
                 </div>
-                <div class="artifact-meta">
-                  <span class="artifact-topic">
-                    <i class="fa-solid fa-hashtag"></i> {{ artifact.topicScope }}
-                  </span>
-                  <span class="artifact-dim dim-{{ artifact.dimension }}">
-                    {{ artifact.dimension }}
-                  </span>
+                <div class="session-meta">
+                  <div class="meta-item">
+                    <span class="meta-label">Protocol</span>
+                    <span class="meta-value">{{ session.protocol | uppercase }}</span>
+                  </div>
+                  <div class="meta-item">
+                    <span class="meta-label">Health</span>
+                    <span class="meta-value health-{{ session.health }}">
+                      {{ session.health }}
+                    </span>
+                  </div>
+                  <div class="meta-item">
+                    <span class="meta-label">Messages</span>
+                    <span class="meta-value">{{ session.message_count | number }}</span>
+                  </div>
                 </div>
-                <div class="artifact-footer">
-                  <span class="artifact-version">v{{ artifact.currentVersion }}</span>
-                  <span class="artifact-updated">
-                    Updated {{ artifact.updatedAt | date: 'MMM d, y' }}
+                <div class="session-footer">
+                  <span class="session-time">
+                    Started {{ session.started_at | date: 'MMM d, y h:mm a' }}
                   </span>
+                  @if (session.stopped_at) {
+                    <span class="session-time">
+                      Stopped {{ session.stopped_at | date: 'MMM d, y h:mm a' }}
+                    </span>
+                  }
                 </div>
               </div>
             }
@@ -173,133 +189,104 @@ type LoadState = 'loading' | 'empty' | 'loaded' | 'error';
         font-size: var(--text-xs);
       }
 
-      /* Filter bar */
-      .filter-bar {
+      /* Sessions list */
+      .sessions-list {
         display: flex;
-        gap: var(--space-2);
-        margin-bottom: var(--space-4);
+        flex-direction: column;
+        gap: var(--space-3);
+        max-width: 800px;
       }
-      .filter-btn {
-        padding: var(--space-1) var(--space-3);
-        border: 1px solid var(--color-border-subtle);
-        border-radius: var(--radius-full);
-        background: none;
-        color: var(--color-text-secondary);
-        cursor: pointer;
-        font-size: var(--text-xs);
-        font-weight: var(--font-weight-medium);
-        transition: all 0.15s ease;
-        &:hover {
-          border-color: var(--color-border);
-          color: var(--color-text-primary);
-        }
-        &.active {
-          background: var(--color-accent);
-          border-color: var(--color-accent);
-          color: #fff;
-        }
-      }
-
-      /* Artifact grid */
-      .artifact-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: var(--space-4);
-      }
-      .artifact-card {
+      .session-card {
         border: 1px solid var(--color-border-subtle);
         border-radius: var(--radius-md);
         padding: var(--space-4);
         background: var(--color-surface-raised);
         display: flex;
         flex-direction: column;
-        gap: var(--space-2);
+        gap: var(--space-3);
         transition: border-color 0.15s ease;
         &:hover {
           border-color: var(--color-border);
         }
       }
-      .artifact-header {
+      .session-header {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: var(--space-2);
       }
-      .artifact-name {
-        font-weight: var(--font-weight-semibold);
-        color: var(--color-text-primary);
+      .session-id {
+        font-family: var(--font-mono);
         font-size: var(--text-sm);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        color: var(--color-text-secondary);
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        i {
+          color: var(--color-accent);
+        }
       }
-      .artifact-status {
+      .session-status {
         font-size: var(--text-xs);
         padding: 2px var(--space-2);
         border-radius: var(--radius-full);
         flex-shrink: 0;
+        font-weight: var(--font-weight-medium);
         &[data-status='active'] {
           background: var(--color-success-subtle);
           color: var(--color-success);
         }
-        &[data-status='draft'] {
+        &[data-status='starting'] {
           background: var(--color-warning-subtle);
           color: var(--color-warning);
         }
-        &[data-status='archived'] {
+        &[data-status='stopped'] {
           background: var(--color-border-subtle);
           color: var(--color-text-tertiary);
         }
+        &[data-status='error'] {
+          background: var(--color-danger-subtle);
+          color: var(--color-danger);
+        }
       }
-      .artifact-meta {
+      .session-meta {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: var(--space-4);
+      }
+      .meta-item {
         display: flex;
-        align-items: center;
-        gap: var(--space-3);
+        flex-direction: column;
+        gap: 4px;
       }
-      .artifact-topic {
+      .meta-label {
         font-size: var(--text-xs);
-        color: var(--color-text-secondary);
-        font-family: var(--font-mono);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        i {
-          margin-right: 2px;
-          opacity: 0.5;
-        }
+        color: var(--color-text-tertiary);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
       }
-      .artifact-dim {
-        font-size: var(--text-xs);
+      .meta-value {
+        font-size: var(--text-sm);
+        color: var(--color-text-primary);
         font-weight: var(--font-weight-medium);
-        padding: 2px var(--space-2);
-        border-radius: var(--radius-full);
-        flex-shrink: 0;
-        &.dim-shape {
-          background: rgba(59, 130, 246, 0.12);
-          color: #60a5fa;
+        &.health-healthy {
+          color: var(--color-success);
         }
-        &.dim-cadence {
-          background: rgba(168, 85, 247, 0.12);
-          color: #c084fc;
+        &.health-degraded {
+          color: var(--color-warning);
         }
-        &.dim-domain {
-          background: rgba(34, 197, 94, 0.12);
-          color: #4ade80;
+        &.health-stalled {
+          color: var(--color-danger);
         }
       }
-      .artifact-footer {
+      .session-footer {
         display: flex;
         justify-content: space-between;
         align-items: center;
         padding-top: var(--space-2);
         border-top: 1px solid var(--color-border-subtle);
       }
-      .artifact-version {
-        font-size: var(--text-xs);
-        color: var(--color-text-tertiary);
-        font-family: var(--font-mono);
-      }
-      .artifact-updated {
+      .session-time {
         font-size: var(--text-xs);
         color: var(--color-text-tertiary);
       }
@@ -307,24 +294,10 @@ type LoadState = 'loading' | 'empty' | 'loaded' | 'error';
   ],
 })
 export class SessionsPage implements OnInit {
-  private readonly api = inject(ApiService);
+  private readonly http = inject(HttpClient);
 
-  private readonly artifacts = signal<IntentArtifactSummary[]>([]);
-  protected readonly activeDimension = signal<string>('all');
+  protected readonly sessions = signal<RuntimeSession[]>([]);
   protected readonly state = signal<LoadState>('loading');
-
-  protected readonly dimensions = [
-    { label: 'All', value: 'all' },
-    { label: 'Shape', value: 'shape' },
-    { label: 'Cadence', value: 'cadence' },
-    { label: 'Domain', value: 'domain' },
-  ];
-
-  protected readonly filtered = computed(() => {
-    const dim = this.activeDimension();
-    const all = this.artifacts();
-    return dim === 'all' ? all : all.filter((a) => a.dimension === dim);
-  });
 
   ngOnInit(): void {
     this.load();
@@ -334,18 +307,16 @@ export class SessionsPage implements OnInit {
     this.load();
   }
 
-  protected setDimension(dim: string): void {
-    this.activeDimension.set(dim);
-  }
-
   private load(): void {
     this.state.set('loading');
-    this.api.intent.list().subscribe({
-      next: (items) => {
-        this.artifacts.set(items);
-        this.state.set(items.length === 0 ? 'empty' : 'loaded');
-      },
-      error: () => this.state.set('error'),
-    });
+    this.http
+      .get<{ sessions: RuntimeSession[] }>(`${environment.apiUrl}/sessions`)
+      .subscribe({
+        next: (response) => {
+          this.sessions.set(response.sessions);
+          this.state.set(response.sessions.length === 0 ? 'empty' : 'loaded');
+        },
+        error: () => this.state.set('error'),
+      });
   }
 }

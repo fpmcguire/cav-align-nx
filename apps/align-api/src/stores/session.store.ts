@@ -118,4 +118,47 @@ export class SessionStore {
       this.log.error('updateHealth exception', err);
     }
   }
+
+  // ── Query methods ────────────────────────────────────────────────────────
+
+  async listSessions(tenantId: string): Promise<unknown[]> {
+    try {
+      const { data, error } = await this.supabase
+        .from('alignment_sessions')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .order('started_at', { ascending: false });
+
+      if (error) {
+        this.log.error('listSessions failed', error, { tenantId });
+        return [];
+      }
+
+      return data || [];
+    } catch (err) {
+      this.log.error('listSessions exception', err);
+      return [];
+    }
+  }
+
+  async getSession(tenantId: string, sessionId: string): Promise<unknown | null> {
+    try {
+      const { data, error } = await this.supabase
+        .from('alignment_sessions')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .eq('id', sessionId)
+        .single();
+
+      if (error) {
+        this.log.error('getSession failed', error, { tenantId, sessionId });
+        return null;
+      }
+
+      return data;
+    } catch (err) {
+      this.log.error('getSession exception', err);
+      return null;
+    }
+  }
 }
