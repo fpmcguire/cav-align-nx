@@ -1,19 +1,6 @@
 import { Component, inject, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { HttpClient } from '@angular/common/http';
-import { environment } from '../../../environments/environment';
-
-// Runtime session from alignment_sessions table (API format - camelCase)
-interface RuntimeSession {
-  id: string;
-  connectionId: string;
-  protocol: string;
-  status: 'starting' | 'active' | 'stopped' | 'error';
-  health: 'healthy' | 'degraded' | 'stalled';
-  messageCount: number;
-  startedAt: string;
-  stoppedAt: string | null;
-}
+import { ApiService, type RuntimeSession } from '../../core/services/api.service';
 
 type LoadState = 'loading' | 'empty' | 'loaded' | 'error';
 
@@ -293,7 +280,7 @@ type LoadState = 'loading' | 'empty' | 'loaded' | 'error';
   ],
 })
 export class SessionsPage implements OnInit {
-  private readonly http = inject(HttpClient);
+  private readonly api = inject(ApiService);
 
   protected readonly sessions = signal<RuntimeSession[]>([]);
   protected readonly state = signal<LoadState>('loading');
@@ -308,14 +295,12 @@ export class SessionsPage implements OnInit {
 
   private load(): void {
     this.state.set('loading');
-    this.http
-      .get<{ sessions: RuntimeSession[] }>(`${environment.apiUrl}/sessions`)
-      .subscribe({
-        next: (response) => {
-          this.sessions.set(response.sessions);
-          this.state.set(response.sessions.length === 0 ? 'empty' : 'loaded');
-        },
-        error: () => this.state.set('error'),
-      });
+    this.api.sessions.list().subscribe({
+      next: (sessions) => {
+        this.sessions.set(sessions);
+        this.state.set(sessions.length === 0 ? 'empty' : 'loaded');
+      },
+      error: () => this.state.set('error'),
+    });
   }
 }

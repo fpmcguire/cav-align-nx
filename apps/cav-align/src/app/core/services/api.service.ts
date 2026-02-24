@@ -386,4 +386,56 @@ export class ApiService {
           .pipe(catchError(this.handleError)),
     },
   } as const;
+
+  // ---------------------------------------------------------------------------
+  // sessions — Runtime Alignment Sessions (CAV Level 1)
+  // ---------------------------------------------------------------------------
+
+  readonly sessions = {
+    /**
+     * GET /api/sessions — list runtime sessions.
+     */
+    list: (): Observable<RuntimeSession[]> =>
+      this.http
+        .get<{ sessions: RuntimeSession[] }>(this.url('/api/sessions'))
+        .pipe(
+          map((response) => response.sessions),
+          catchError(this.handleError),
+        ),
+
+    /**
+     * Convenience: same as list() but returns a Signal.
+     * Must be called within an injection context.
+     */
+    listSignal: (initialValue: RuntimeSession[] = []): Signal<RuntimeSession[]> =>
+      toSignal(
+        this.http
+          .get<{ sessions: RuntimeSession[] }>(this.url('/api/sessions'))
+          .pipe(
+            map((response) => response.sessions),
+            catchError(this.handleError),
+          ),
+        { initialValue },
+      ),
+
+    /**
+     * GET /api/sessions/:id — get session detail.
+     */
+    get: (id: string): Observable<RuntimeSession> =>
+      this.http
+        .get<RuntimeSession>(this.url(`/api/sessions/${id}`))
+        .pipe(catchError(this.handleError)),
+  } as const;
+}
+
+// Runtime session type (matches Sessions API Contract v1.0)
+export interface RuntimeSession {
+  id: string;
+  connectionId: string;
+  protocol: string;
+  status: 'starting' | 'active' | 'stopped' | 'error';
+  health: 'healthy' | 'degraded' | 'stalled';
+  messageCount: number;
+  startedAt: string;
+  stoppedAt: string | null;
 }
