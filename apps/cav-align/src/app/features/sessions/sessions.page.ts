@@ -3,17 +3,16 @@ import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
 
-// Runtime session from alignment_sessions table
+// Runtime session from alignment_sessions table (API format - camelCase)
 interface RuntimeSession {
   id: string;
-  tenant_id: string;
-  connection_id: string;
+  connectionId: string;
   protocol: string;
   status: 'starting' | 'active' | 'stopped' | 'error';
   health: 'healthy' | 'degraded' | 'stalled';
-  message_count: number;
-  started_at: string;
-  stopped_at: string | null;
+  messageCount: number;
+  startedAt: string;
+  stoppedAt: string | null;
 }
 
 type LoadState = 'loading' | 'empty' | 'loaded' | 'error';
@@ -85,16 +84,16 @@ type LoadState = 'loading' | 'empty' | 'loaded' | 'error';
                   </div>
                   <div class="meta-item">
                     <span class="meta-label">Messages</span>
-                    <span class="meta-value">{{ session.message_count | number }}</span>
+                    <span class="meta-value">{{ session.messageCount | number }}</span>
                   </div>
                 </div>
                 <div class="session-footer">
                   <span class="session-time">
-                    Started {{ session.started_at | date: 'MMM d, y h:mm a' }}
+                    Started {{ session.startedAt | date: 'MMM d, y h:mm a' }}
                   </span>
-                  @if (session.stopped_at) {
+                  @if (session.stoppedAt) {
                     <span class="session-time">
-                      Stopped {{ session.stopped_at | date: 'MMM d, y h:mm a' }}
+                      Stopped {{ session.stoppedAt | date: 'MMM d, y h:mm a' }}
                     </span>
                   }
                 </div>
